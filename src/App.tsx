@@ -1,0 +1,274 @@
+import { useEffect, useState } from 'react';
+import {
+  Flame,
+  Mic,
+  MicOff,
+  Power,
+  RotateCcw,
+  SlidersHorizontal,
+  Sparkles,
+} from 'lucide-react';
+import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
+import { DiagnosticsDrawer } from './components/DiagnosticsDrawer.tsx';
+import { VoiceWaveform } from './components/VoiceWaveform.tsx';
+import { useCosmicLive } from './hooks/useCosmicLive.ts';
+
+export default function App() {
+  const {
+    mode,
+    cosmicState,
+    isMicMuted,
+    errorMessage,
+    transcripts,
+    actionLogs,
+    diagnosticLogs,
+    diagnostics,
+    speakerTestResult,
+    bridgeRuntime,
+    audioLevelRef,
+    togglePower,
+    toggleMicMute,
+    toggleBadmashMode,
+    testSpeaker,
+    runManualSafeAction,
+    clearError,
+  } = useCosmicLive();
+
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [cameraResetTick, setCameraResetTick] = useState(0);
+
+  const isBadmash = mode === 'badmash';
+  const isLive =
+    cosmicState === 'CONNECTING' || cosmicState === 'LISTENING' || cosmicState === 'SPEAKING';
+
+  useEffect(() => {
+    document.body.dataset.cosmicState = cosmicState;
+    document.body.dataset.cosmicMode = mode;
+  }, [cosmicState, mode]);
+
+  const latestTranscript = transcripts[transcripts.length - 1];
+
+  return (
+    <div className="relative h-screen w-screen overflow-hidden bg-[#10131d] text-slate-100 select-none">
+      {/* Full-Viewport 3D Character Stage */}
+      <main className="absolute inset-0">
+        <CosmicKnightCanvas
+          mode={mode}
+          cosmicState={cosmicState}
+          audioLevelRef={audioLevelRef}
+          cameraResetTick={cameraResetTick}
+        />
+      </main>
+
+      {/* Top 3-Zone Header Bar (Solid/Translucent without backdrop-blur over WebGL) */}
+      <header className="pointer-events-none fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-4 px-4 py-3 sm:px-6">
+        <div className="pointer-events-auto flex items-center gap-3">
+          <span className="font-display text-lg font-bold tracking-wider text-white whitespace-nowrap shrink-0 sm:text-xl">
+            COSMIC AI
+          </span>
+        </div>
+
+        {/* Clean Unboxed Status & Character Metadata */}
+        <div
+          className="hidden items-center gap-2.5 text-xs font-medium text-slate-300 md:flex"
+          data-testid="cosmic-status-strip"
+        >
+          <span
+            className={`font-mono font-semibold tracking-wider ${
+              cosmicState === 'ERROR'
+                ? 'text-red-400'
+                : cosmicState === 'SPEAKING'
+                  ? isBadmash
+                    ? 'text-orange-400'
+                    : 'text-sky-300'
+                  : cosmicState === 'LISTENING'
+                    ? isBadmash
+                      ? 'text-purple-300'
+                      : 'text-sky-400'
+                    : 'text-slate-300'
+            }`}
+          >
+            {cosmicState}
+          </span>
+          <span aria-hidden="true" className="text-slate-600">
+            ·
+          </span>
+          <span className="text-slate-200">
+            {isBadmash ? 'Purple Knight · Savage Mode' : 'Blue Knight · Normal Mode'}
+          </span>
+          <span aria-hidden="true" className="text-slate-600">
+            ·
+          </span>
+          <span className="font-mono text-slate-400">
+            {isBadmash ? 'Don Voice (Charon)' : 'Voice (Zephyr)'}
+          </span>
+        </div>
+
+        <div className="pointer-events-auto flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setCameraResetTick((t) => t + 1)}
+            aria-label="Reset 3D camera view"
+            title="Reset 3D view"
+            className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/12 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/25 hover:text-white focus-visible:outline-2 focus-visible:outline-sky-400"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setDrawerOpen((o) => !o)}
+            aria-expanded={drawerOpen}
+            aria-label="Toggle audio diagnostics and safe actions drawer"
+            className={`flex h-10 items-center gap-2 rounded-lg border px-3 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-sky-400 ${
+              drawerOpen
+                ? isBadmash
+                  ? 'border-purple-400/60 bg-purple-950/90 text-purple-100'
+                  : 'border-sky-400/60 bg-sky-950/90 text-sky-100'
+                : 'border-white/12 bg-[#0d101b]/90 text-slate-200 hover:border-white/25 hover:text-white'
+            }`}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Diagnostics &amp; Actions</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Collapsible Diagnostics & Safe Actions Drawer */}
+      <DiagnosticsDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        mode={mode}
+        diagnostics={diagnostics}
+        speakerTestResult={speakerTestResult}
+        bridgeRuntime={bridgeRuntime}
+        transcripts={transcripts}
+        actionLogs={actionLogs}
+        diagnosticLogs={diagnosticLogs}
+        onTestSpeaker={testSpeaker}
+        onRunSafeAction={runManualSafeAction}
+      />
+
+      {/* Error Banner or Live Caption Strip above Bottom Dock */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-24 z-20 flex flex-col items-center gap-2 px-4">
+        {errorMessage && (
+          <div
+            role="alert"
+            className="pointer-events-auto flex max-w-lg items-center justify-between gap-3 rounded-lg border border-red-500/40 bg-[#1a0d12]/95 px-3.5 py-2 text-xs text-red-200 shadow-lg"
+          >
+            <span>{errorMessage}</span>
+            <button
+              type="button"
+              onClick={clearError}
+              className="shrink-0 font-semibold text-red-300 hover:text-white"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {latestTranscript && (
+          <div
+            className="max-w-xl rounded-lg border border-white/10 bg-[#0d101b]/90 px-3.5 py-2 text-center text-xs text-slate-200 shadow-lg"
+            data-testid="live-caption"
+          >
+            <span className="mr-2 font-semibold text-slate-400">
+              {latestTranscript.speaker === 'user' ? 'You:' : 'Cosmic:'}
+            </span>
+            <span>{latestTranscript.text}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom Voice-First Control Dock */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-3">
+        <div
+          className={`pointer-events-auto flex flex-wrap items-center justify-center gap-2.5 rounded-2xl border px-3 py-2.5 shadow-2xl transition-colors duration-200 sm:flex-nowrap sm:gap-3 sm:px-4 ${
+            isBadmash
+              ? 'border-orange-500/45 bg-[#160e1c]/95 shadow-[0_0_28px_rgba(234,88,12,0.28)]'
+              : 'border-sky-400/30 bg-[#0d111d]/95 shadow-[0_0_24px_rgba(14,165,233,0.18)]'
+          }`}
+          data-testid="cosmic-control-dock"
+        >
+          {/* Power Button (Connect / Disconnect Gemini Live) */}
+          <button
+            type="button"
+            onClick={() => void togglePower()}
+            aria-label={isLive ? 'Power off Cosmic AI' : 'Power on Cosmic AI'}
+            className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-sky-400 ${
+              isLive
+                ? isBadmash
+                  ? 'border-orange-400/60 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30'
+                  : 'border-sky-400/60 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30'
+                : 'border-white/15 bg-white/8 text-slate-100 hover:bg-white/15'
+            }`}
+          >
+            <Power className="h-4 w-4" />
+            <span>
+              {cosmicState === 'CONNECTING'
+                ? 'Connecting...'
+                : isLive
+                  ? 'Power Off'
+                  : 'Power On'}
+            </span>
+          </button>
+
+          {/* Primary Microphone Button */}
+          <button
+            type="button"
+            onClick={() => void toggleMicMute()}
+            aria-label={
+              !isLive
+                ? 'Start voice conversation'
+                : isMicMuted
+                  ? 'Unmute microphone'
+                  : 'Mute microphone'
+            }
+            className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-sky-400 ${
+              isLive && !isMicMuted
+                ? isBadmash
+                  ? 'border-purple-400/70 bg-purple-600/30 text-white shadow-[0_0_16px_rgba(168,85,247,0.45)]'
+                  : 'border-sky-400/70 bg-sky-500/30 text-white shadow-[0_0_16px_rgba(56,189,248,0.45)]'
+                : isMicMuted
+                  ? 'border-amber-400/50 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
+                  : 'border-white/15 bg-white/8 text-slate-200 hover:bg-white/15'
+            }`}
+          >
+            {isMicMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            <span>{!isLive ? 'Speak' : isMicMuted ? 'Muted' : 'Listening'}</span>
+          </button>
+
+          {/* Live Voice Waveform */}
+          <VoiceWaveform mode={mode} cosmicState={cosmicState} audioLevelRef={audioLevelRef} />
+
+          {/* NORMAL MODE / BADMASH MODE Toggle */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isBadmash}
+            aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
+            onClick={toggleBadmashMode}
+            data-testid="badmash-mode-toggle"
+            className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold tracking-wide whitespace-nowrap transition-all duration-200 focus-visible:outline-2 focus-visible:outline-orange-400 ${
+              isBadmash
+                ? 'border-orange-400/80 bg-gradient-to-r from-orange-600/35 to-purple-700/45 text-orange-100 shadow-[0_0_20px_rgba(249,115,22,0.45)]'
+                : 'border-sky-400/30 bg-[#13192a] text-sky-200 hover:border-sky-400/50 hover:bg-[#192238]'
+            }`}
+          >
+            {isBadmash ? (
+              <>
+                <Flame className="h-4 w-4 text-orange-400" />
+                <span>BADMASH MODE</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4 text-sky-400" />
+                <span>NORMAL MODE</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

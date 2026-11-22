@@ -1,0 +1,814 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type {
+  ActionLogEntry,
+  AudioDiagnosticsSnapshot,
+  CosmicMode,
+  CosmicState,
+  DiagnosticLogEntry,
+  ToolCallPayload,
+  ToolResponsePayload,
+  TranscriptEntry,
+} from '../types/cosmic.ts';
+import {
+  base64ToUint8,
+  computeRmsLevel,
+  float32ToInt16Pcm,
+  int16BytesToFloat32,
+  parsePcmMimeType,
+  resampleFloat32,
+  uint8ToBase64,
+} from '../utils/pcmAudio.ts';
+import { executeSafeToolCall } from '../utils/safeActions.ts';
+import { detectBridgeEnvironment, getCosmicNativeBridge } from '../utils/androidBridge.ts';
+
+const WORKLET_PROCESSOR_CODE = `
+class CosmicMicProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const input = inputs[0];
+    if (input && input[0] && input[0].length > 0) {
+      this.port.postMessage(new Float32Array(input[0]));
+    }
+    return true;
+  }
+}
+registerProcessor('cosmic-mic-processor', CosmicMicProcessor);
+`;
+
+interface ServerWsMessage {
+  type:
+    | 'connected'
+    | 'mode_updated'
+    | 'disconnected'
+    | 'session_closed'
+    | 'audio'
+    | 'interrupted'
+    | 'turn_complete'
+    | 'input_transcript'
+    | 'output_transcript'
+    | 'tool_call'
+    | 'error';
+  mode?: CosmicMode;
+  model?: string;
+  voice?: string;
+  data?: string;
+  mimeType?: string;
+  text?: string;
+  reason?: string;
+  code?: string;
+  message?: string;
+  calls?: ToolCallPayload[];
+}
+
+export function useCosmicLive() {
+  const [mode, setMode] = useState<CosmicMode>('normal');
+  const [cosmicState, setCosmicState] = useState<CosmicState>('IDLE');
+  const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
+  const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
+  const [speakerTestResult, setSpeakerTestResult] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
+    contextState: 'uninitialized',
+    sampleRate: 0,
+    micPermission: 'unknown',
+    micActive: false,
+    chunksSent: 0,
+    chunksPlayed: 0,
+    queuedChunks: 0,
+    lastMimeType: 'none',
+    activeModel: 'standby',
+    activeVoice: 'Zephyr',
+  }));
+
+  const modeRef = useRef<CosmicMode>(mode);
+  const stateRef = useRef<CosmicState>(cosmicState);
+  const isMicMutedRef = useRef<boolean>(isMicMuted);
+  const audioLevelRef = useRef<number>(0);
+
+  // Persistent single AudioContext + GainNode -> destination
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const masterGainRef = useRef<GainNode | null>(null);
+  const outputAnalyserRef = useRef<AnalyserNode | null>(null);
+
+  // Mic nodes
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micProcessorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
+  const micSilenceGainRef = useRef<GainNode | null>(null);
+
+  // Playback queue
+  const nextStartTimeRef = useRef<number>(0);
+  const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const wsRef = useRef<WebSocket | null>(null);
+  const meterTimerRef = useRef<number | null>(null);
+  const bridgeEnv = useRef(detectBridgeEnvironment());
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    stateRef.current = cosmicState;
+  }, [cosmicState]);
+
+  useEffect(() => {
+    isMicMutedRef.current = isMicMuted;
+  }, [isMicMuted]);
+
+  const addLog = useCallback(
+    (
+      level: DiagnosticLogEntry['level'],
+      category: DiagnosticLogEntry['category'],
+      message: string,
+    ) => {
+      const entry: DiagnosticLogEntry = {
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        level,
+        category,
+        message,
+        timestamp: Date.now(),
+      };
+      if (level === 'error') {
+        console.error(`[COSMIC:${category}]`, message);
+      } else if (level === 'warn') {
+        console.warn(`[COSMIC:${category}]`, message);
+      } else {
+        console.info(`[COSMIC:${category}]`, message);
+      }
+      setDiagnosticLogs((prev) => [entry, ...prev].slice(0, 60));
+    },
+    [],
+  );
+
+  const appendTranscript = useCallback(
+    (speaker: TranscriptEntry['speaker'], text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      setTranscripts((prev) => {
+        const last = prev[prev.length - 1];
+        // Merge streaming incremental fragments from the same speaker within 3 seconds
+        if (last && last.speaker === speaker && Date.now() - last.timestamp < 3000) {
+          const merged = `${last.text} ${trimmed}`.replace(/\s+/g, ' ').trim();
+          return [
+            ...prev.slice(0, -1),
+            { ...last, text: merged, timestamp: Date.now(), mode: modeRef.current },
+          ];
+        }
+        return [
+          ...prev.slice(-19),
+          {
+            id: `tr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            speaker,
+            text: trimmed,
+            timestamp: Date.now(),
+            mode: modeRef.current,
+          },
+        ];
+      });
+    },
+    [],
+  );
+
+  const ensureAudioContext = useCallback(async (): Promise<AudioContext> => {
+    let ctx = audioCtxRef.current;
+    if (!ctx || ctx.state === 'closed') {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      ctx = new AudioCtx({ latencyHint: 'interactive' });
+      const gain = ctx.createGain();
+      gain.gain.value = 1.0;
+
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+
+      gain.connect(analyser);
+      analyser.connect(ctx.destination);
+
+      audioCtxRef.current = ctx;
+      masterGainRef.current = gain;
+      outputAnalyserRef.current = analyser;
+
+      addLog('info', 'audio', `AudioContext initialized at ${ctx.sampleRate}Hz`);
+    }
+
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+      addLog('info', 'audio', `AudioContext resumed -> state=${ctx.state}`);
+    }
+
+    setDiagnostics((prev) => ({
+      ...prev,
+      contextState: ctx.state,
+      sampleRate: ctx.sampleRate,
+    }));
+
+    return ctx;
+  }, [addLog]);
+
+  const clearAudioQueue = useCallback(
+    (reason: string) => {
+      const count = activeSourcesRef.current.size;
+      if (count > 0) {
+        for (const src of activeSourcesRef.current) {
+          try {
+            src.onended = null;
+            src.stop();
+            src.disconnect();
+          } catch {
+            // already stopped
+          }
+        }
+        activeSourcesRef.current.clear();
+        addLog('info', 'playback', `Cleared ${count} queued/playing audio chunks (${reason})`);
+      }
+      nextStartTimeRef.current = 0;
+      setDiagnostics((prev) => ({ ...prev, queuedChunks: 0 }));
+    },
+    [addLog],
+  );
+
+  const playPcmChunk = useCallback(
+    async (base64Data: string, mimeType: string) => {
+      try {
+        const ctx = await ensureAudioContext();
+        if (ctx.state !== 'running') {
+          await ctx.resume();
+        }
+        const gainNode = masterGainRef.current;
+        if (!gainNode) return;
+
+        const format = parsePcmMimeType(mimeType);
+        const bytes = base64ToUint8(base64Data);
+        const floatSamples = int16BytesToFloat32(bytes);
+        if (floatSamples.length === 0) return;
+
+        const frameCount = Math.floor(floatSamples.length / format.channels);
+        if (frameCount <= 0) return;
+
+        const audioBuffer = ctx.createBuffer(format.channels, frameCount, format.sampleRate);
+        if (format.channels === 1) {
+          audioBuffer.getChannelData(0).set(floatSamples.subarray(0, frameCount));
+        } else {
+          for (let ch = 0; ch < format.channels; ch++) {
+            const channelData = audioBuffer.getChannelData(ch);
+            for (let i = 0; i < frameCount; i++) {
+              channelData[i] = floatSamples[i * format.channels + ch];
+            }
+          }
+        }
+
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(gainNode);
+
+        const now = ctx.currentTime;
+        const startAt = Math.max(now + 0.015, nextStartTimeRef.current);
+        nextStartTimeRef.current = startAt + audioBuffer.duration;
+
+        activeSourcesRef.current.add(source);
+        setCosmicState('SPEAKING');
+        setDiagnostics((prev) => ({
+          ...prev,
+          chunksPlayed: prev.chunksPlayed + 1,
+          queuedChunks: activeSourcesRef.current.size,
+          lastMimeType: mimeType,
+          contextState: ctx.state,
+        }));
+
+        source.onended = () => {
+          activeSourcesRef.current.delete(source);
+          try {
+            source.disconnect();
+          } catch {
+            // ignore
+          }
+          setDiagnostics((prev) => ({
+            ...prev,
+            queuedChunks: activeSourcesRef.current.size,
+          }));
+          if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
+            setCosmicState(wsRef.current?.readyState === WebSocket.OPEN ? 'LISTENING' : 'IDLE');
+          }
+        };
+
+        source.start(startAt);
+      } catch (err) {
+        addLog(
+          'error',
+          'playback',
+          `PCM decode/playback error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [addLog, ensureAudioContext],
+  );
+
+  const stopMicrophone = useCallback(() => {
+    if (micProcessorRef.current) {
+      try {
+        micProcessorRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      micProcessorRef.current = null;
+    }
+    if (micSilenceGainRef.current) {
+      try {
+        micSilenceGainRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      micSilenceGainRef.current = null;
+    }
+    if (micSourceRef.current) {
+      try {
+        micSourceRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      micSourceRef.current = null;
+    }
+    if (micStreamRef.current) {
+      for (const track of micStreamRef.current.getTracks()) {
+        track.stop();
+      }
+      micStreamRef.current = null;
+      addLog('info', 'mic', 'Microphone tracks stopped.');
+    }
+    setDiagnostics((prev) => ({ ...prev, micActive: false }));
+  }, [addLog]);
+
+  const startMicrophone = useCallback(
+    async (ctx: AudioContext) => {
+      stopMicrophone();
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setDiagnostics((prev) => ({ ...prev, micPermission: 'unavailable' }));
+        throw new Error('Microphone API is unavailable in this browser.');
+      }
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        setDiagnostics((prev) => ({ ...prev, micPermission: 'granted', micActive: true }));
+        addLog('info', 'mic', `Microphone permission granted (${ctx.sampleRate}Hz capture).`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setDiagnostics((prev) => ({ ...prev, micPermission: 'denied', micActive: false }));
+        addLog('error', 'mic', `Microphone permission denied or failed: ${msg}`);
+        throw new Error(`Microphone permission required: ${msg}`);
+      }
+
+      micStreamRef.current = stream;
+      const source = ctx.createMediaStreamSource(stream);
+      micSourceRef.current = source;
+
+      // Silent sink keeps AudioWorklet / ScriptProcessor active without mic loopback echo
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      silentGain.connect(ctx.destination);
+      micSilenceGainRef.current = silentGain;
+
+      const handlePcmSamples = (rawSamples: Float32Array) => {
+        if (isMicMutedRef.current) return;
+        const level = computeRmsLevel(rawSamples);
+        if (stateRef.current !== 'SPEAKING') {
+          audioLevelRef.current = level;
+        }
+
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        const downsampled = resampleFloat32(rawSamples, ctx.sampleRate, 16000);
+        const pcm16 = float32ToInt16Pcm(downsampled);
+        const bytes = new Uint8Array(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength);
+        const base64 = uint8ToBase64(bytes);
+
+        ws.send(
+          JSON.stringify({
+            type: 'audio',
+            data: base64,
+            mimeType: 'audio/pcm;rate=16000',
+          }),
+        );
+        setDiagnostics((prev) => ({ ...prev, chunksSent: prev.chunksSent + 1 }));
+      };
+
+      // Handle unexpected track disconnect
+      const [audioTrack] = stream.getAudioTracks();
+      if (audioTrack) {
+        audioTrack.onended = () => {
+          addLog('warn', 'mic', 'Microphone device disconnected.');
+          setDiagnostics((prev) => ({ ...prev, micActive: false }));
+        };
+      }
+
+      // Prefer modern AudioWorkletNode, fallback cleanly to ScriptProcessorNode
+      let workletAttached = false;
+      if (typeof AudioWorkletNode !== 'undefined' && ctx.audioWorklet) {
+        try {
+          const blob = new Blob([WORKLET_PROCESSOR_CODE], { type: 'application/javascript' });
+          const blobUrl = URL.createObjectURL(blob);
+          await ctx.audioWorklet.addModule(blobUrl);
+          URL.revokeObjectURL(blobUrl);
+
+          const workletNode = new AudioWorkletNode(ctx, 'cosmic-mic-processor');
+          workletNode.port.onmessage = (ev: MessageEvent<Float32Array>) => {
+            handlePcmSamples(ev.data);
+          };
+          source.connect(workletNode);
+          workletNode.connect(silentGain);
+          micProcessorRef.current = workletNode;
+          workletAttached = true;
+          addLog('info', 'mic', 'AudioWorklet mic pipeline started.');
+        } catch (err) {
+          addLog(
+            'warn',
+            'mic',
+            `AudioWorklet unavailable, using ScriptProcessor fallback: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+
+      if (!workletAttached) {
+        const scriptNode = ctx.createScriptProcessor(4096, 1, 1);
+        scriptNode.onaudioprocess = (ev) => {
+          handlePcmSamples(ev.inputBuffer.getChannelData(0));
+        };
+        source.connect(scriptNode);
+        scriptNode.connect(silentGain);
+        micProcessorRef.current = scriptNode;
+        addLog('info', 'mic', 'ScriptProcessor mic pipeline started.');
+      }
+    },
+    [addLog, stopMicrophone],
+  );
+
+  // Poll output AnalyserNode smoothly while speaking so 3D Knight glow reacts to real audio
+  useEffect(() => {
+    const dataArray = new Uint8Array(64);
+    const updateMeter = () => {
+      if (stateRef.current === 'SPEAKING' && outputAnalyserRef.current) {
+        outputAnalyserRef.current.getByteTimeDomainData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const norm = (dataArray[i] - 128) / 128;
+          sum += norm * norm;
+        }
+        audioLevelRef.current = Math.min(1, Math.sqrt(sum / dataArray.length) * 3.8);
+      } else if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
+        audioLevelRef.current = 0;
+      }
+      meterTimerRef.current = window.setTimeout(updateMeter, 45);
+    };
+    meterTimerRef.current = window.setTimeout(updateMeter, 45);
+    return () => {
+      if (meterTimerRef.current !== null) clearTimeout(meterTimerRef.current);
+    };
+  }, []);
+
+  const handleServerMessage = useCallback(
+    async (raw: string) => {
+      let msg: ServerWsMessage;
+      try {
+        msg = JSON.parse(raw) as ServerWsMessage;
+      } catch {
+        return;
+      }
+
+      if (msg.type === 'connected' || msg.type === 'mode_updated') {
+        setErrorMessage(null);
+        setCosmicState('LISTENING');
+        setDiagnostics((prev) => ({
+          ...prev,
+          activeModel: msg.model || prev.activeModel,
+          activeVoice: msg.voice || prev.activeVoice,
+        }));
+        addLog(
+          'info',
+          'gemini',
+          `${msg.type === 'mode_updated' ? 'Switched mode' : 'Connected'} -> model=${msg.model}, voice=${msg.voice}, mode=${msg.mode}`,
+        );
+        return;
+      }
+
+      if (msg.type === 'audio' && msg.data) {
+        await playPcmChunk(msg.data, msg.mimeType || 'audio/pcm;rate=24000');
+        return;
+      }
+
+      if (msg.type === 'interrupted') {
+        clearAudioQueue('user-interrupted');
+        setCosmicState('LISTENING');
+        addLog('info', 'playback', 'Gemini Live turn interrupted by user speech.');
+        return;
+      }
+
+      if (msg.type === 'turn_complete') {
+        if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
+          setCosmicState('LISTENING');
+        }
+        return;
+      }
+
+      if (msg.type === 'input_transcript' && msg.text) {
+        appendTranscript('user', msg.text);
+        return;
+      }
+
+      if (msg.type === 'output_transcript' && msg.text) {
+        appendTranscript('cosmic', msg.text);
+        return;
+      }
+
+      if (msg.type === 'tool_call' && Array.isArray(msg.calls)) {
+        const bridge = getCosmicNativeBridge();
+        const responses: ToolResponsePayload[] = [];
+
+        for (const call of msg.calls) {
+          addLog('info', 'tool', `Executing tool ${call.name}(${JSON.stringify(call.args)})`);
+          const { response, logEntry } = await executeSafeToolCall(
+            call.name,
+            call.args || {},
+            bridge,
+          );
+          setActionLogs((prev) => [logEntry, ...prev].slice(0, 30));
+          addLog(
+            logEntry.ok ? 'info' : 'warn',
+            'tool',
+            `Tool ${call.name} -> ${logEntry.ok ? 'OK' : 'FAILED'}: ${logEntry.message}`,
+          );
+          responses.push({
+            id: call.id,
+            name: call.name,
+            response,
+          });
+        }
+
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'tool_response',
+              responses,
+            }),
+          );
+        }
+        return;
+      }
+
+      if (msg.type === 'session_closed' || msg.type === 'disconnected') {
+        clearAudioQueue('session-closed');
+        if (stateRef.current !== 'IDLE') {
+          setCosmicState('IDLE');
+        }
+        addLog('warn', 'gemini', msg.reason || 'Gemini Live session closed.');
+        return;
+      }
+
+      if (msg.type === 'error') {
+        const errText = msg.message || 'Unknown Gemini Live error.';
+        setErrorMessage(errText);
+        setCosmicState('ERROR');
+        addLog('error', 'gemini', errText);
+      }
+    },
+    [addLog, appendTranscript, clearAudioQueue, playPcmChunk],
+  );
+
+  const disconnect = useCallback(() => {
+    clearAudioQueue('user-disconnect');
+    stopMicrophone();
+    if (wsRef.current) {
+      const ws = wsRef.current;
+      wsRef.current = null;
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'disconnect' }));
+        }
+        ws.close();
+      } catch {
+        // ignore
+      }
+    }
+    setCosmicState('IDLE');
+    setErrorMessage(null);
+    addLog('info', 'gemini', 'Cosmic AI session disconnected.');
+  }, [addLog, clearAudioQueue, stopMicrophone]);
+
+  const connect = useCallback(async () => {
+    if (stateRef.current === 'CONNECTING') return;
+    setErrorMessage(null);
+    setCosmicState('CONNECTING');
+
+    try {
+      const ctx = await ensureAudioContext();
+      await startMicrophone(ctx);
+
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch {
+          // ignore
+        }
+        wsRef.current = null;
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/live`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        addLog('info', 'gemini', `WebSocket connected to ${wsUrl}. Initializing Gemini Live...`);
+        ws.send(
+          JSON.stringify({
+            type: 'connect',
+            badmashMode: modeRef.current === 'badmash',
+          }),
+        );
+      };
+
+      ws.onmessage = (event) => {
+        void handleServerMessage(String(event.data));
+      };
+
+      ws.onerror = () => {
+        addLog('error', 'gemini', 'WebSocket transport error connecting to /live.');
+        setErrorMessage('Voice transport error. Check server status and retry.');
+        setCosmicState('ERROR');
+      };
+
+      ws.onclose = (ev) => {
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+          stopMicrophone();
+          clearAudioQueue('ws-closed');
+          if (stateRef.current !== 'ERROR' && stateRef.current !== 'IDLE') {
+            setCosmicState('IDLE');
+          }
+          addLog('info', 'gemini', `WebSocket closed (code ${ev.code}).`);
+        }
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMessage(msg);
+      setCosmicState('ERROR');
+      stopMicrophone();
+    }
+  }, [addLog, clearAudioQueue, ensureAudioContext, handleServerMessage, startMicrophone, stopMicrophone]);
+
+  const togglePower = useCallback(async () => {
+    if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
+      await connect();
+    } else {
+      disconnect();
+    }
+  }, [connect, disconnect]);
+
+  const toggleMicMute = useCallback(async () => {
+    if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
+      await connect();
+      setIsMicMuted(false);
+      return;
+    }
+    setIsMicMuted((prev) => {
+      const next = !prev;
+      addLog('info', 'mic', next ? 'Microphone muted.' : 'Microphone unmuted.');
+      return next;
+    });
+  }, [addLog, connect]);
+
+  const toggleBadmashMode = useCallback(() => {
+    setMode((prev) => {
+      const next: CosmicMode = prev === 'normal' ? 'badmash' : 'normal';
+      addLog(
+        'info',
+        'gemini',
+        next === 'badmash'
+          ? 'BADMASH MODE ON -> Switching to Purple Knight + Deep Don voice (Charon).'
+          : 'NORMAL MODE ON -> Switching to Blue Knight + Friendly voice (Zephyr).',
+      );
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        clearAudioQueue('mode-switch');
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'set_mode',
+            badmashMode: next === 'badmash',
+          }),
+        );
+      }
+      return next;
+    });
+  }, [addLog, clearAudioQueue]);
+
+  const testSpeaker = useCallback(async () => {
+    try {
+      const ctx = await ensureAudioContext();
+      if (ctx.state !== 'running') {
+        await ctx.resume();
+      }
+      const gain = masterGainRef.current;
+      if (!gain) throw new Error('Master GainNode missing.');
+
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+
+      env.gain.setValueAtTime(0.0001, ctx.currentTime);
+      env.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.03);
+      env.gain.setValueAtTime(0.22, ctx.currentTime + 0.42);
+      env.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.58);
+
+      osc.connect(env);
+      env.connect(gain);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.6);
+
+      const summary = `440Hz tone played via AudioContext (${ctx.state}, ${ctx.sampleRate}Hz) -> GainNode -> destination.`;
+      setSpeakerTestResult(summary);
+      addLog('info', 'playback', summary);
+    } catch (err) {
+      const msg = `Speaker test failed: ${err instanceof Error ? err.message : String(err)}`;
+      setSpeakerTestResult(msg);
+      addLog('error', 'playback', msg);
+    }
+  }, [addLog, ensureAudioContext]);
+
+  const runManualSafeAction = useCallback(
+    async (name: string, args: Record<string, unknown>) => {
+      const bridge = getCosmicNativeBridge();
+      const { logEntry } = await executeSafeToolCall(name, args, bridge);
+      setActionLogs((prev) => [logEntry, ...prev].slice(0, 30));
+      addLog(
+        logEntry.ok ? 'info' : 'warn',
+        'tool',
+        `Manual action ${name} -> ${logEntry.message}`,
+      );
+      return logEntry;
+    },
+    [addLog],
+  );
+
+  // Monitor device changes cleanly
+  useEffect(() => {
+    if (!navigator.mediaDevices) return;
+    const onDeviceChange = () => {
+      addLog('info', 'mic', 'Audio media devices changed.');
+    };
+    navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener?.('devicechange', onDeviceChange);
+    };
+  }, [addLog]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      clearAudioQueue('unmount');
+      stopMicrophone();
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch {
+          // ignore
+        }
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+        void audioCtxRef.current.close();
+      }
+    };
+  }, [clearAudioQueue, stopMicrophone]);
+
+  return {
+    mode,
+    cosmicState,
+    isMicMuted,
+    errorMessage,
+    transcripts,
+    actionLogs,
+    diagnosticLogs,
+    diagnostics,
+    speakerTestResult,
+    bridgeRuntime: bridgeEnv.current,
+    audioLevelRef,
+    togglePower,
+    toggleMicMute,
+    toggleBadmashMode,
+    testSpeaker,
+    runManualSafeAction,
+    clearError: () => setErrorMessage(null),
+  };
+}

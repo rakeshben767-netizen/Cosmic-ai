@@ -1,0 +1,6 @@
+{
+  "name": "COSMIC AI",
+  "description": "Real-time voice-to-voice AI companion with interactive 3D characters, Normal and Badmash Tapori modes, automatic multi-language support, and safe device actions.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
