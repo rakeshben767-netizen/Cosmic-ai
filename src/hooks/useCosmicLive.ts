@@ -64,6 +64,7 @@ export function useCosmicLive() {
   const [cosmicState, setCosmicState] = useState<CosmicState>('IDLE');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [micNotice, setMicNotice] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
@@ -345,27 +346,50 @@ export function useCosmicLive() {
       stopMicrophone();
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setDiagnostics((prev) => ({ ...prev, micPermission: 'unavailable' }));
-        throw new Error('Microphone API is unavailable in this browser.');
+        setDiagnostics((prev) => ({ ...prev, micPermission: 'unavailable', micActive: false }));
+        throw new Error(
+          'Microphone capture is unavailable in this browser context (requires HTTPS or localhost).',
+        );
       }
 
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+        } catch (constraintErr) {
+          const errName =
+            constraintErr instanceof DOMException ? constraintErr.name : '';
+          if (errName === 'OverconstrainedError' || errName === 'ConstraintNotSatisfiedError') {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } else {
+            throw constraintErr;
+          }
+        }
         setDiagnostics((prev) => ({ ...prev, micPermission: 'granted', micActive: true }));
+        setMicNotice(null);
         addLog('info', 'mic', `Microphone permission granted (${ctx.sampleRate}Hz capture).`);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setDiagnostics((prev) => ({ ...prev, micPermission: 'denied', micActive: false }));
-        addLog('error', 'mic', `Microphone permission denied or failed: ${msg}`);
-        throw new Error(`Microphone permission required: ${msg}`);
+        const errName = err instanceof DOMException ? err.name : '';
+        const rawMsg = err instanceof Error ? err.message : String(err);
+        const isNotFound =
+          errName === 'NotFoundError' ||
+          errName === 'DevicesNotFoundError' ||
+          /device not found/i.test(rawMsg);
+        const permissionState = isNotFound ? 'unavailable' : 'denied';
+        const friendlyMsg = isNotFound
+          ? 'No microphone hardware was detected on this device. You can still type below to talk with Cosmic AI.'
+          : 'Microphone permission was denied. Allow mic access in your browser site settings and tap Retry Mic, or type below to talk with Cosmic AI.';
+
+        setDiagnostics((prev) => ({ ...prev, micPermission: permissionState, micActive: false }));
+        addLog('warn', 'mic', `Microphone unavailable (${rawMsg}).`);
+        throw new Error(friendlyMsg);
       }
 
       micStreamRef.current = stream;
@@ -603,17 +627,26 @@ export function useCosmicLive() {
     }
     setCosmicState('IDLE');
     setErrorMessage(null);
+    setMicNotice(null);
     addLog('info', 'gemini', 'Cosmic AI session disconnected.');
   }, [addLog, clearAudioQueue, stopMicrophone]);
 
   const connect = useCallback(async () => {
     if (stateRef.current === 'CONNECTING') return;
     setErrorMessage(null);
+    setMicNotice(null);
     setCosmicState('CONNECTING');
 
     try {
       const ctx = await ensureAudioContext();
-      await startMicrophone(ctx);
+      try {
+        await startMicrophone(ctx);
+        setIsMicMuted(false);
+      } catch (micErr) {
+        const micMsg = micErr instanceof Error ? micErr.message : String(micErr);
+        setIsMicMuted(true);
+        setMicNotice(micMsg);
+      }
 
       if (wsRef.current) {
         try {
@@ -668,6 +701,36 @@ export function useCosmicLive() {
     }
   }, [addLog, clearAudioQueue, ensureAudioContext, handleServerMessage, startMicrophone, stopMicrophone]);
 
+  const retryMicrophone = useCallback(async () => {
+    try {
+      const ctx = await ensureAudioContext();
+      await startMicrophone(ctx);
+      setIsMicMuted(false);
+      setMicNotice(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setIsMicMuted(true);
+      setMicNotice(msg);
+    }
+  }, [ensureAudioContext, startMicrophone]);
+
+  const sendTextMessage = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      await ensureAudioContext();
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        setErrorMessage('Power on Cosmic AI first to send a live message.');
+        return;
+      }
+      clearAudioQueue('user-text-interrupt');
+      appendTranscript('user', trimmed);
+      ws.send(JSON.stringify({ type: 'text', text: trimmed }));
+    },
+    [appendTranscript, clearAudioQueue, ensureAudioContext],
+  );
+
   const togglePower = useCallback(async () => {
     if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
       await connect();
@@ -679,7 +742,10 @@ export function useCosmicLive() {
   const toggleMicMute = useCallback(async () => {
     if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
       await connect();
-      setIsMicMuted(false);
+      return;
+    }
+    if (!micStreamRef.current) {
+      await retryMicrophone();
       return;
     }
     setIsMicMuted((prev) => {
@@ -687,7 +753,7 @@ export function useCosmicLive() {
       addLog('info', 'mic', next ? 'Microphone muted.' : 'Microphone unmuted.');
       return next;
     });
-  }, [addLog, connect]);
+  }, [addLog, connect, retryMicrophone]);
 
   const toggleBadmashMode = useCallback(() => {
     setMode((prev) => {
@@ -762,15 +828,41 @@ export function useCosmicLive() {
     [addLog],
   );
 
-  // Monitor device changes cleanly
+  // Monitor microphone permission & device changes cleanly
   useEffect(() => {
-    if (!navigator.mediaDevices) return;
+    let cancelled = false;
+    let permStatus: PermissionStatus | null = null;
+
+    if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+      navigator.permissions
+        .query({ name: 'microphone' as PermissionName })
+        .then((status) => {
+          if (cancelled) return;
+          permStatus = status;
+          setDiagnostics((prev) => ({ ...prev, micPermission: status.state }));
+          status.onchange = () => {
+            setDiagnostics((prev) => ({ ...prev, micPermission: status.state }));
+            if (status.state === 'granted') {
+              setMicNotice(null);
+            }
+          };
+        })
+        .catch(() => {
+          // Permissions API for microphone unsupported in some browsers
+        });
+    }
+
     const onDeviceChange = () => {
       addLog('info', 'mic', 'Audio media devices changed.');
     };
-    navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange);
+    navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
+
     return () => {
-      navigator.mediaDevices.removeEventListener?.('devicechange', onDeviceChange);
+      cancelled = true;
+      if (permStatus) {
+        permStatus.onchange = null;
+      }
+      navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
     };
   }, [addLog]);
 
@@ -797,6 +889,7 @@ export function useCosmicLive() {
     cosmicState,
     isMicMuted,
     errorMessage,
+    micNotice,
     transcripts,
     actionLogs,
     diagnosticLogs,
@@ -807,8 +900,11 @@ export function useCosmicLive() {
     togglePower,
     toggleMicMute,
     toggleBadmashMode,
+    retryMicrophone,
+    sendTextMessage,
     testSpeaker,
     runManualSafeAction,
     clearError: () => setErrorMessage(null),
+    clearMicNotice: () => setMicNotice(null),
   };
 }

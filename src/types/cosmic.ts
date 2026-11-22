@@ -57,7 +57,7 @@ export interface ToolResponsePayload {
 export interface AudioDiagnosticsSnapshot {
   contextState: AudioContextState | 'uninitialized';
   sampleRate: number;
-  micPermission: 'unknown' | 'granted' | 'denied' | 'unavailable';
+  micPermission: 'unknown' | 'prompt' | 'granted' | 'denied' | 'unavailable';
   micActive: boolean;
   chunksSent: number;
   chunksPlayed: number;

@@ -5,6 +5,7 @@ import {
   MicOff,
   Power,
   RotateCcw,
+  Send,
   SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ export default function App() {
     cosmicState,
     isMicMuted,
     errorMessage,
+    micNotice,
     transcripts,
     actionLogs,
     diagnosticLogs,
@@ -29,13 +31,17 @@ export default function App() {
     togglePower,
     toggleMicMute,
     toggleBadmashMode,
+    retryMicrophone,
+    sendTextMessage,
     testSpeaker,
     runManualSafeAction,
     clearError,
+    clearMicNotice,
   } = useCosmicLive();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [cameraResetTick, setCameraResetTick] = useState(0);
+  const [fallbackDraft, setFallbackDraft] = useState('');
 
   const isBadmash = mode === 'badmash';
   const isLive =
@@ -149,7 +155,7 @@ export default function App() {
         onRunSafeAction={runManualSafeAction}
       />
 
-      {/* Error Banner or Live Caption Strip above Bottom Dock */}
+      {/* Error Banner, Mic Recovery Notice, Fallback Input & Live Caption Strip above Bottom Dock */}
       <div className="pointer-events-none fixed inset-x-0 bottom-24 z-20 flex flex-col items-center gap-2 px-4">
         {errorMessage && (
           <div
@@ -165,6 +171,62 @@ export default function App() {
               Dismiss
             </button>
           </div>
+        )}
+
+        {micNotice && (
+          <div
+            role="status"
+            data-testid="mic-permission-notice"
+            className="pointer-events-auto flex max-w-xl flex-wrap items-center justify-between gap-2.5 rounded-lg border border-amber-400/40 bg-[#18130c]/95 px-3.5 py-2 text-xs text-amber-100 shadow-lg"
+          >
+            <span className="flex-1 min-w-[200px]">{micNotice}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void retryMicrophone()}
+                className="rounded-md border border-amber-400/50 bg-amber-500/20 px-2.5 py-1 font-semibold text-amber-100 hover:bg-amber-500/30"
+              >
+                Retry Mic
+              </button>
+              <button
+                type="button"
+                onClick={clearMicNotice}
+                className="font-medium text-amber-300 hover:text-white"
+              >
+                Hide
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isLive && !diagnostics.micActive && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!fallbackDraft.trim()) return;
+              void sendTextMessage(fallbackDraft);
+              setFallbackDraft('');
+            }}
+            className="pointer-events-auto flex w-full max-w-md items-center gap-2 rounded-xl border border-white/15 bg-[#0d101b]/95 px-2.5 py-1.5 shadow-lg"
+            data-testid="mic-fallback-form"
+          >
+            <input
+              type="text"
+              value={fallbackDraft}
+              onChange={(e) => setFallbackDraft(e.target.value)}
+              placeholder="Mic blocked — type here to hear Cosmic speak..."
+              aria-label="Send message to Cosmic AI voice"
+              className="min-w-0 flex-1 bg-transparent px-1.5 text-xs text-slate-100 placeholder:text-slate-400 focus:outline-none"
+            />
+            <button
+              type="submit"
+              aria-label="Send prompt to Cosmic AI"
+              className="flex h-8 items-center gap-1 rounded-lg border border-sky-400/40 bg-sky-500/20 px-2.5 text-xs font-semibold text-sky-100 hover:bg-sky-500/30"
+            >
+              <Send className="h-3.5 w-3.5" />
+              <span>Send</span>
+            </button>
+          </form>
         )}
 
         {latestTranscript && (
