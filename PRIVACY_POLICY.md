@@ -2,7 +2,7 @@
 
 **Package Name:** `com.cosmicai.app`  
 **Effective Date:** November 23, 2026  
-**Developer Contact:** rakeshben35@gmail.com
+**Developer Contact:** watchrewards99@gmail.com
 
 COSMIC AI ("we", "our", or "the App") is a real-time 3D voice-to-voice AI companion featuring Normal Mode and Badmash Comedy Mode.
 
@@ -14,11 +14,11 @@ COSMIC AI ("we", "our", or "the App") is a real-time 3D voice-to-voice AI compan
 ## 2. AI Voice Processing
 Voice and text prompts are processed over encrypted HTTPS/WSS connections using Google Gemini Live API services to generate conversational responses and execute user-requested safe device actions.
 
-## 3. Advertising (Unity Ads)
-COSMIC AI uses **Unity Ads** (Game ID `800447797`) for periodic ad breaks and Rewarded Ads (unlocking Badmash Mode and the 12-hour periodic-ad-free pass). Unity Ads may collect device identifiers, IP address, crash/performance data, and ad interaction metrics under Unity's Privacy Policy: https://unity.com/legal/privacy-policy.
+## 3. Third-Party Advertising
+COSMIC AI uses third-party advertising partners for periodic ad breaks and Rewarded Ads (unlocking Badmash Mode and the 12-hour periodic-ad-free pass). Advertising partners may collect device advertising identifiers, IP address, crash/performance data, and ad interaction metrics in accordance with their own privacy policies.
 
 ## 4. Children's Privacy
 COSMIC AI is not intended for children under 13.
 
 ## 5. Contact
-Questions or data deletion requests: **rakeshben35@gmail.com**
+Questions or data deletion requests: **watchrewards99@gmail.com**

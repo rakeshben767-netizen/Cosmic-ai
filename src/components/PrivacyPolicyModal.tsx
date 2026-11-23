@@ -64,12 +64,13 @@ export function PrivacyPolicyModal({ open, onClose }: PrivacyPolicyModalProps) {
           </section>
 
           <section>
-            <h3 className="mb-1 font-semibold text-sky-300">3. Unity Ads (Game ID 800447797)</h3>
+            <h3 className="mb-1 font-semibold text-sky-300">3. Third-Party Advertising</h3>
             <p>
-              We use Unity Ads for 4-minute periodic breaks and optional Rewarded Ads (unlocking
-              Badmash Mode or earning a 12-hour periodic-ad-free pass). Unity Technologies may
-              process advertising IDs, IP addresses, and ad engagement metrics under Unity&apos;s
-              Privacy Policy (https://unity.com/legal/privacy-policy).
+              COSMIC AI displays ads from third-party advertising partners for 4-minute periodic
+              breaks and optional Rewarded Ads (unlocking Badmash Mode or earning a 12-hour
+              periodic-ad-free pass). Advertising partners may process device advertising IDs, IP
+              addresses, diagnostics, and ad engagement metrics in accordance with their own
+              privacy policies.
             </p>
           </section>
 
@@ -85,7 +86,7 @@ export function PrivacyPolicyModal({ open, onClose }: PrivacyPolicyModalProps) {
           <section>
             <h3 className="mb-1 font-semibold text-sky-300">5. Developer Contact</h3>
             <p>
-              Email <span className="font-mono text-white">rakeshben35@gmail.com</span> for data
+              Email <span className="font-mono text-white">watchrewards99@gmail.com</span> for data
               safety or privacy inquiries.
             </p>
           </section>
