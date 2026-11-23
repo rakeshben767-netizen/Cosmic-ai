@@ -45,9 +45,9 @@ can temporarily return **`404`** until GitHub finishes indexing the `latest` rel
   - Check `https://github.com/rakeshben767-netizen/Cosmic-ai/releases` and make sure you are downloading the APK from the newest `debug-apk-build-<RUN_NUMBER>-1` tag (newer builds bundle the web UI inside `app/src/main/assets/cosmic/` and load locally via `WebViewAssetLoader`).
   - Uninstall the previous `COSMIC AI` APK from your phone before installing the newly downloaded APK.
 - **Connecting Live Gemini Voice from the APK**:
-  - Real-time Gemini Live voice connects to the backend `/live` WebSocket (`server.ts`).
-  - Deploy this repo via `render.yaml` / `Dockerfile` on Render (Node 22+, build `npm install && npm run build`, start `NODE_ENV=production node server.ts`, env `GEMINI_API_KEY`) so a public `https://...` host is reachable.
-  - Set `VITE_BACKEND_URL` (or `DEFAULT_ANDROID_BACKEND_URL` in `src/hooks/useCosmicLive.ts`) before building the APK.
+  - Real-time Gemini Live voice connects to the backend `/live` WebSocket (`server.ts`), preconfigured by default to `https://cosmic-ai-2.ai.studio`.
+  - To host your own backend on **Railway (`railway.app`)**: deploy this GitHub repo (uses `railway.json` + `Dockerfile`), add `GEMINI_API_KEY` under **Variables**, and generate a public Railway domain.
+  - Optionally set `VITE_BACKEND_URL` (or `DEFAULT_ANDROID_BACKEND_URL` in `src/hooks/useCosmicLive.ts`) before building the APK.
 
 ---
 

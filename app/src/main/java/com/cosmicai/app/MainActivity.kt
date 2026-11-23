@@ -206,7 +206,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initUnityAds() {
-        UnityAds.setDebugMode(false)
         UnityAds.initialize(
             applicationContext,
             UNITY_GAME_ID,
