@@ -33,6 +33,7 @@ import com.unity3d.ads.IUnityAdsLoadListener
 import com.unity3d.ads.IUnityAdsShowListener
 import com.unity3d.ads.UnityAds
 import com.unity3d.ads.UnityAdsShowOptions
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 class MainActivity : AppCompatActivity() {
@@ -46,6 +47,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var pendingWebPermissionRequest: PermissionRequest? = null
     private val readyPlacements = ConcurrentHashMap<String, Boolean>()
+    private val loadingPlacements = ConcurrentHashMap<String, Boolean>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var lastAdErrorReason: String = ""
+    private var pendingShowCallbackId: String? = null
+    private var pendingShowTimeoutRunnable: Runnable? = null
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -205,35 +212,63 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initUnityAds() {
+        if (UnityAds.isInitialized) {
+            loadPlacement(PLACEMENT_REWARDED)
+            return
+        }
         UnityAds.initialize(
             applicationContext,
             UNITY_GAME_ID,
             UNITY_TEST_MODE,
             object : IUnityAdsInitializationListener {
                 override fun onInitializationComplete() {
-                    loadPlacement(PLACEMENT_REWARDED)
+                    runOnUiThread {
+                        lastAdErrorReason = ""
+                        loadPlacement(PLACEMENT_REWARDED)
+                    }
                 }
 
                 override fun onInitializationFailed(
                     error: UnityAds.UnityAdsInitializationError?,
                     message: String?
                 ) {
-                    readyPlacements[PLACEMENT_REWARDED] = false
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        if (!isDestroyed && !UnityAds.isInitialized) {
-                            initUnityAds()
-                        }
-                    }, 5000)
+                    val reason = "Unity init failed (${error?.name ?: "UNKNOWN"}): ${message ?: "check network/Game ID"}"
+                    runOnUiThread {
+                        readyPlacements[PLACEMENT_REWARDED] = false
+                        loadingPlacements[PLACEMENT_REWARDED] = false
+                        lastAdErrorReason = reason
+                        resolvePendingShowFailure(reason)
+                        mainHandler.postDelayed({
+                            if (!isDestroyed && !UnityAds.isInitialized) {
+                                initUnityAds()
+                            }
+                        }, 10000)
+                    }
                 }
             }
         )
     }
 
     private fun loadPlacement(placementId: String) {
+        if (!UnityAds.isInitialized) return
+        if (readyPlacements[placementId] == true || loadingPlacements[placementId] == true) return
+        loadingPlacements[placementId] = true
         readyPlacements[placementId] = false
         UnityAds.load(placementId, object : IUnityAdsLoadListener {
             override fun onUnityAdsAdLoaded(pid: String?) {
-                readyPlacements[pid ?: placementId] = true
+                val targetPid = pid ?: placementId
+                runOnUiThread {
+                    loadingPlacements[targetPid] = false
+                    readyPlacements[targetPid] = true
+                    lastAdErrorReason = ""
+                    val pendingCb = pendingShowCallbackId
+                    if (pendingCb != null) {
+                        pendingShowCallbackId = null
+                        pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+                        pendingShowTimeoutRunnable = null
+                        showReadyAd(targetPid, pendingCb)
+                    }
+                }
             }
 
             override fun onUnityAdsFailedToLoad(
@@ -242,23 +277,43 @@ class MainActivity : AppCompatActivity() {
                 message: String?
             ) {
                 val targetPid = pid ?: placementId
-                readyPlacements[targetPid] = false
-                Handler(Looper.getMainLooper()).postDelayed({
-                    if (!isDestroyed && UnityAds.isInitialized) {
-                        loadPlacement(targetPid)
-                    }
-                }, 5000)
+                val reason = "Unity ad failed (${error?.name ?: "NO_FILL"}): ${message ?: "no ad available right now"}"
+                runOnUiThread {
+                    loadingPlacements[targetPid] = false
+                    readyPlacements[targetPid] = false
+                    lastAdErrorReason = reason
+                    resolvePendingShowFailure(reason)
+                    mainHandler.postDelayed({
+                        if (!isDestroyed && UnityAds.isInitialized) {
+                            loadPlacement(targetPid)
+                        }
+                    }, 15000)
+                }
             }
         })
     }
 
-    private fun dispatchAdResult(callbackId: String, completed: Boolean, placementId: String) {
+    private fun resolvePendingShowFailure(reason: String) {
+        val pendingCb = pendingShowCallbackId ?: return
+        pendingShowCallbackId = null
+        pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingShowTimeoutRunnable = null
+        dispatchAdResult(pendingCb, false, PLACEMENT_REWARDED, reason)
+    }
+
+    private fun dispatchAdResult(
+        callbackId: String,
+        completed: Boolean,
+        placementId: String,
+        reason: String = ""
+    ) {
         val safeCallback = callbackId.replace(Regex("[^a-zA-Z0-9_-]"), "")
         val safePlacement = placementId.replace(Regex("[^a-zA-Z0-9_-]"), "")
+        val quotedReason = JSONObject.quote(reason)
         runOnUiThread {
             if (::webView.isInitialized) {
                 webView.evaluateJavascript(
-                    "window.__cosmicOnUnityAdResult && window.__cosmicOnUnityAdResult('$safeCallback', $completed, '$safePlacement');",
+                    "window.__cosmicOnUnityAdResult && window.__cosmicOnUnityAdResult('$safeCallback', $completed, '$safePlacement', $quotedReason);",
                     null
                 )
             }
@@ -266,49 +321,78 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showUnityAd(callbackId: String) {
-        val targetPlacement = PLACEMENT_REWARDED
         runOnUiThread {
-            val isReady = readyPlacements[targetPlacement] == true
-            if (!UnityAds.isInitialized || !isReady) {
-                if (UnityAds.isInitialized) {
-                    loadPlacement(targetPlacement)
-                } else {
-                    initUnityAds()
-                }
-                dispatchAdResult(callbackId, false, targetPlacement)
+            if (readyPlacements[PLACEMENT_REWARDED] == true) {
+                pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+                pendingShowTimeoutRunnable = null
+                pendingShowCallbackId = null
+                showReadyAd(PLACEMENT_REWARDED, callbackId)
                 return@runOnUiThread
             }
 
-            readyPlacements[targetPlacement] = false
-            UnityAds.show(
-                this@MainActivity,
-                targetPlacement,
-                UnityAdsShowOptions(),
-                object : IUnityAdsShowListener {
-                    override fun onUnityAdsShowFailure(
-                        pid: String?,
-                        error: UnityAds.UnityAdsShowError?,
-                        message: String?
-                    ) {
-                        loadPlacement(targetPlacement)
-                        dispatchAdResult(callbackId, false, targetPlacement)
+            pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+            val previousCb = pendingShowCallbackId
+            if (previousCb != null && previousCb != callbackId) {
+                dispatchAdResult(previousCb, false, PLACEMENT_REWARDED, "Superseded by newer ad request.")
+            }
+
+            pendingShowCallbackId = callbackId
+            val timeoutRunnable = Runnable {
+                if (pendingShowCallbackId == callbackId) {
+                    pendingShowCallbackId = null
+                    pendingShowTimeoutRunnable = null
+                    val reason = if (lastAdErrorReason.isNotEmpty()) {
+                        lastAdErrorReason
+                    } else {
+                        "Rewarded ad is still loading. Try again in a few seconds."
                     }
-
-                    override fun onUnityAdsShowStart(pid: String?) {}
-
-                    override fun onUnityAdsShowClick(pid: String?) {}
-
-                    override fun onUnityAdsShowComplete(
-                        pid: String?,
-                        state: UnityAds.UnityAdsShowCompletionState?
-                    ) {
-                        loadPlacement(targetPlacement)
-                        val completed = state == UnityAds.UnityAdsShowCompletionState.COMPLETED
-                        dispatchAdResult(callbackId, completed, targetPlacement)
-                    }
+                    dispatchAdResult(callbackId, false, PLACEMENT_REWARDED, reason)
                 }
-            )
+            }
+            pendingShowTimeoutRunnable = timeoutRunnable
+            mainHandler.postDelayed(timeoutRunnable, 8000)
+
+            if (!UnityAds.isInitialized) {
+                initUnityAds()
+            } else {
+                loadPlacement(PLACEMENT_REWARDED)
+            }
         }
+    }
+
+    private fun showReadyAd(targetPlacement: String, callbackId: String) {
+        readyPlacements[targetPlacement] = false
+        UnityAds.show(
+            this@MainActivity,
+            targetPlacement,
+            UnityAdsShowOptions(),
+            object : IUnityAdsShowListener {
+                override fun onUnityAdsShowFailure(
+                    pid: String?,
+                    error: UnityAds.UnityAdsShowError?,
+                    message: String?
+                ) {
+                    val reason = "Unity show failed (${error?.name ?: "UNKNOWN"}): ${message ?: "display error"}"
+                    lastAdErrorReason = reason
+                    loadPlacement(targetPlacement)
+                    dispatchAdResult(callbackId, false, targetPlacement, reason)
+                }
+
+                override fun onUnityAdsShowStart(pid: String?) {}
+
+                override fun onUnityAdsShowClick(pid: String?) {}
+
+                override fun onUnityAdsShowComplete(
+                    pid: String?,
+                    state: UnityAds.UnityAdsShowCompletionState?
+                ) {
+                    loadPlacement(targetPlacement)
+                    val completed = state == UnityAds.UnityAdsShowCompletionState.COMPLETED
+                    val reason = if (completed) "" else "Rewarded ad was skipped before finishing."
+                    dispatchAdResult(callbackId, completed, targetPlacement, reason)
+                }
+            }
+        )
     }
 
     private fun hasRecordAudio(): Boolean {
@@ -336,6 +420,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
         webView.destroy()
         super.onDestroy()
     }

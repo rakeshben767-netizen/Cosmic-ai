@@ -20,16 +20,32 @@ interface AndroidAdsWindow {
     showInterstitialAd?: (callbackId: string) => string;
     showRewardedAd?: (callbackId: string) => string;
   };
-  __cosmicOnUnityAdResult?: (callbackId: string, completed: boolean, placementId: string) => void;
+  __cosmicOnUnityAdResult?: (
+    callbackId: string,
+    completed: boolean,
+    placementId: string,
+    reason?: string,
+  ) => void;
 }
 
 const pendingNativeAdResolvers = new Map<string, (completed: boolean) => void>();
+let lastUnityAdError = '';
+
+export function getLastUnityAdError(): string {
+  return lastUnityAdError;
+}
 
 function ensureNativeAdCallbackRegistered(): void {
   if (typeof window === 'undefined') return;
   const win = window as unknown as AndroidAdsWindow;
   if (!win.__cosmicOnUnityAdResult) {
-    win.__cosmicOnUnityAdResult = (callbackId: string, completed: boolean) => {
+    win.__cosmicOnUnityAdResult = (
+      callbackId: string,
+      completed: boolean,
+      _placementId?: string,
+      reason?: string,
+    ) => {
+      lastUnityAdError = completed ? '' : (reason || '').trim();
       const resolver = pendingNativeAdResolvers.get(callbackId);
       if (resolver) {
         pendingNativeAdResolvers.delete(callbackId);

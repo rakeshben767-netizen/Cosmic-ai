@@ -21,6 +21,7 @@ import {
 import { executeSafeToolCall } from '../utils/safeActions.ts';
 import { detectBridgeEnvironment, getCosmicNativeBridge } from '../utils/androidBridge.ts';
 import {
+  getLastUnityAdError,
   triggerUnityAd,
   UNITY_ADS_CONFIG,
   type WebAdPromptRequest,
@@ -915,8 +916,10 @@ export function useCosmicLive() {
       }
 
       if (!rewarded) {
+        const nativeReason = getLastUnityAdError();
         setErrorMessage(
-          'Rewarded ad must be watched completely (or is still loading) to unlock Badmash Mode.',
+          nativeReason ||
+            'Rewarded ad must be watched completely (or is still loading) to unlock Badmash Mode.',
         );
         return;
       }
@@ -956,7 +959,10 @@ export function useCosmicLive() {
     }
 
     if (!rewarded) {
-      setErrorMessage('Rewarded ad was not completed or is still loading. Try again shortly.');
+      const nativeReason = getLastUnityAdError();
+      setErrorMessage(
+        nativeReason || 'Rewarded ad was not completed or is still loading. Try again shortly.',
+      );
       return false;
     }
 
