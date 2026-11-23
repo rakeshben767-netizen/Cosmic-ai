@@ -46,7 +46,8 @@ can temporarily return **`404`** until GitHub finishes indexing the `latest` rel
   - Uninstall the previous `COSMIC AI` APK from your phone before installing the newly downloaded APK.
 - **Connecting Live Gemini Voice from the APK**:
   - Real-time Gemini Live voice connects to the backend `/live` WebSocket (`server.ts`).
-  - Deploy/share the backend so a public `https://...` host is reachable, then set it inside the app under **Audio, Actions & Bridge → Safe Actions → Live Voice Backend URL**.
+  - Deploy this repo via `render.yaml` / `Dockerfile` on Render (Node 22+, build `npm install && npm run build`, start `NODE_ENV=production node server.ts`, env `GEMINI_API_KEY`) so a public `https://...` host is reachable.
+  - Set `VITE_BACKEND_URL` (or `DEFAULT_ANDROID_BACKEND_URL` in `src/hooks/useCosmicLive.ts`) before building the APK.
 
 ---
 
