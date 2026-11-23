@@ -75,6 +75,7 @@ interface ServerWsMessage {
 }
 
 const DEFAULT_ANDROID_BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL?.trim() ||
   'https://ais-pre-ewacjsnpswr655db2sqdfo-986483805469.asia-southeast1.run.app';
 const BACKEND_STORAGE_KEY = 'cosmic_backend_url';
 
