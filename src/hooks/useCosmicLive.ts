@@ -76,7 +76,7 @@ interface ServerWsMessage {
 
 const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
-  'https://cosmic-ai-2.onrender.com';
+  'https://cosmic-ai-2.ai.studio';
 const BACKEND_STORAGE_KEY = 'cosmic_backend_url';
 
 function isPackagedApkOrigin(): boolean {
@@ -88,7 +88,12 @@ function getInitialBackendUrl(): string {
   if (typeof window === 'undefined') return '';
   try {
     const saved = window.localStorage.getItem(BACKEND_STORAGE_KEY)?.trim() || '';
-    if (saved && /^https?:\/\//i.test(saved) && !/ais-pre-.*\.run\.app/i.test(saved)) {
+    if (
+      saved &&
+      /^https?:\/\//i.test(saved) &&
+      !/ais-pre-.*\.run\.app/i.test(saved) &&
+      !/cosmic-ai-2\.onrender\.com/i.test(saved)
+    ) {
       return saved;
     }
   } catch {
@@ -1105,7 +1110,7 @@ export function useCosmicLive() {
     };
   }, [addLog]);
 
-  // Pre-warm Render free-tier backend when packaged APK launches
+  // Pre-warm backend when packaged APK launches
   useEffect(() => {
     if (!isPackagedApkOrigin()) return;
     const base = (backendUrl || DEFAULT_ANDROID_BACKEND_URL).replace(/\/+$/, '');

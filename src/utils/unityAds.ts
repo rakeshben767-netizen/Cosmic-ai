@@ -69,7 +69,7 @@ export function triggerUnityAd(
 
       const timeout = window.setTimeout(() => {
         finish(false);
-      }, 15000);
+      }, 120000);
 
       pendingNativeAdResolvers.set(callbackId, finish);
 

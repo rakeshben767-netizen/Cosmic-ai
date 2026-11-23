@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val UNITY_GAME_ID = "800447797"
+        private const val UNITY_TEST_MODE = false
         private const val PLACEMENT_INTERSTITIAL = "BP_Interstitial_Android"
         private const val PLACEMENT_REWARDED = "BP_Rewarded_Android"
     }
@@ -205,10 +206,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initUnityAds() {
+        UnityAds.setDebugMode(false)
         UnityAds.initialize(
             applicationContext,
             UNITY_GAME_ID,
-            false,
+            UNITY_TEST_MODE,
             object : IUnityAdsInitializationListener {
                 override fun onInitializationComplete() {
                     loadPlacement(PLACEMENT_INTERSTITIAL)
@@ -221,6 +223,11 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     readyPlacements[PLACEMENT_INTERSTITIAL] = false
                     readyPlacements[PLACEMENT_REWARDED] = false
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (!isDestroyed && !UnityAds.isInitialized) {
+                            initUnityAds()
+                        }
+                    }, 5000)
                 }
             }
         )
