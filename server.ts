@@ -12,6 +12,7 @@ import {
 } from '@google/genai';
 import {
   buildCosmicSystemInstruction,
+  COSMIC_BADMASH_ENTRANCE_CUE,
   COSMIC_TOOL_DECLARATIONS,
   getVoiceNameForMode,
 } from './src/utils/cosmicPrompts.ts';
@@ -372,6 +373,14 @@ async function startServer() {
           model,
           voice,
         });
+
+        if (isModeSwitch && activeMode === 'badmash') {
+          try {
+            session.sendRealtimeInput({ text: COSMIC_BADMASH_ENTRANCE_CUE });
+          } catch (cueErr) {
+            console.warn('[Cosmic Live] Failed sending Badmash entrance cue:', cueErr);
+          }
+        }
       } catch (err) {
         if (clientClosed || myNonce !== connectNonce) return;
         isSwitching = false;

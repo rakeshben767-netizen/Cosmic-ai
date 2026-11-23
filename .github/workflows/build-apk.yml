@@ -89,6 +89,7 @@ jobs:
             fi
             exit 1
           fi
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
           echo "Verified debug APK: $APK_PATH ($(wc -c < "$APK_PATH") bytes)"
 
       - name: Upload debug APK artifact
@@ -99,19 +100,6 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Prepare APK release asset
-        id: prepare_release
-        run: |
-          RELEASE_DIR=$(mktemp -d "${RUNNER_TEMP:-/tmp}/cosmic-release-XXXXXX")
-          TARGET_APK="${RELEASE_DIR}/app-debug.apk"
-          cp "app/build/outputs/apk/debug/app-debug.apk" "$TARGET_APK"
-          if [ ! -f "$TARGET_APK" ] || [ ! -s "$TARGET_APK" ]; then
-            echo "Error: Prepared release APK is missing or empty."
-            exit 1
-          fi
-          echo "apk_path=$TARGET_APK" >> "$GITHUB_OUTPUT"
-          echo "Prepared release asset at $TARGET_APK"
-
       - name: Publish APK to GitHub Releases
         id: publish_release
         continue-on-error: true
@@ -119,20 +107,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh --version
-          ASSET_PATH="${{ steps.prepare_release.outputs.apk_path }}"
-          if [ -z "$ASSET_PATH" ] || [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
-            echo "Error: Prepared release APK does not exist or is empty."
-            exit 1
-          fi
-          if [[ "$ASSET_PATH" != *.apk ]] || [ "$(basename "$ASSET_PATH")" != "app-debug.apk" ]; then
-            echo "Error: Release asset filename must be exactly app-debug.apk."
+          APK_FILE="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK_FILE" ] || [ ! -s "$APK_FILE" ]; then
+            echo "Error: Expected APK missing or empty at $APK_FILE."
             exit 1
           fi
 
           TAG_NAME="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           RELEASE_TITLE="Debug APK Build #${GITHUB_RUN_NUMBER}"
 
-          gh release create "$TAG_NAME" "$ASSET_PATH" \
+          gh release create "$TAG_NAME" "app/build/outputs/apk/debug/app-debug.apk" \
             --title "$RELEASE_TITLE" \
             --target "$GITHUB_SHA" \
             --latest \
@@ -144,6 +128,13 @@ jobs:
           - Intended for testing only (not a Play Store production release).
           - Signed only with a temporary debug keystore."
 
+          ASSET_COUNT=$(gh release view "$TAG_NAME" --json assets --jq '[.assets[] | select(.name == "app-debug.apk")] | length')
+          if [ "$ASSET_COUNT" -lt 1 ]; then
+            echo "Error: Release $TAG_NAME was created but app-debug.apk asset is missing."
+            exit 1
+          fi
+          echo "Verified release $TAG_NAME contains app-debug.apk ($ASSET_COUNT match)."
+
       - name: Report APK download result
         if: always()
         env:
@@ -151,15 +142,19 @@ jobs:
         run: |
           TAG_NAME="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           DIRECT_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-debug.apk"
+          TAG_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/app-debug.apk"
 
           if [ "${{ steps.publish_release.outcome }}" = "success" ]; then
-            gh release view "$TAG_NAME" --json tagName,name,url --template 'Tag: {{.tagName}}{{"\n"}}Title: {{.name}}{{"\n"}}URL: {{.url}}{{"\n"}}'
+            gh release view "$TAG_NAME" --json tagName,name,url,assets --template 'Tag: {{.tagName}}{{"\n"}}Title: {{.name}}{{"\n"}}URL: {{.url}}{{"\n"}}Assets: {{range .assets}}{{.name}} ({{.size}} bytes){{"\n"}}{{end}}'
             echo "Asset filename: app-debug.apk"
+            echo "TAGGED APK DOWNLOAD: $TAG_URL"
             echo "DIRECT APK DOWNLOAD: $DIRECT_URL"
             {
               echo "### DIRECT APK DOWNLOAD"
               echo "$DIRECT_URL"
               echo ""
+              echo "- Tagged download URL (immediate): $TAG_URL"
+              echo "- Releases page: https://github.com/${GITHUB_REPOSITORY}/releases"
               echo "- Release tag: \`$TAG_NAME\`"
               echo "- Asset filename: \`app-debug.apk\`"
               echo "- Backup GitHub Actions artifact \`app-debug-apk\` remains available."

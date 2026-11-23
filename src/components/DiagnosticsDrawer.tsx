@@ -24,11 +24,13 @@ interface DiagnosticsDrawerProps {
   diagnostics: AudioDiagnosticsSnapshot;
   speakerTestResult: string | null;
   bridgeRuntime: { hasNativeBridge: boolean; runtimeLabel: string };
+  backendUrl: string;
   transcripts: TranscriptEntry[];
   actionLogs: ActionLogEntry[];
   diagnosticLogs: DiagnosticLogEntry[];
   onTestSpeaker: () => void;
   onRunSafeAction: (name: string, args: Record<string, unknown>) => void;
+  onUpdateBackendUrl: (url: string) => boolean;
 }
 
 export function DiagnosticsDrawer({
@@ -38,17 +40,21 @@ export function DiagnosticsDrawer({
   diagnostics,
   speakerTestResult,
   bridgeRuntime,
+  backendUrl,
   transcripts,
   actionLogs,
   diagnosticLogs,
   onTestSpeaker,
   onRunSafeAction,
+  onUpdateBackendUrl,
 }: DiagnosticsDrawerProps) {
   const [activeTab, setActiveTab] = useState<'audio' | 'actions' | 'logs'>('audio');
   const [customUrl, setCustomUrl] = useState('https://www.wikipedia.org');
   const [customPhone, setCustomPhone] = useState('+919876543210');
   const [customApp, setCustomApp] = useState('YouTube');
   const [customContact, setCustomContact] = useState('Mom');
+  const [serverDraft, setServerDraft] = useState(backendUrl);
+  const [serverSavedMsg, setServerSavedMsg] = useState<string | null>(null);
 
   if (!open) return null;
 
@@ -193,6 +199,40 @@ export function DiagnosticsDrawer({
                   ? 'Android APK native bridge detected for Contacts, Dialer, and Intents.'
                   : 'Standard browser runtime: safe HTTPS & tel: links enabled; native contacts require Android APK.'}
               </p>
+
+              <div className="mt-3 space-y-1.5 border-t border-white/10 pt-2.5">
+                <label
+                  htmlFor="cosmic-backend-url"
+                  className="block text-[11px] font-medium text-slate-300"
+                >
+                  Live Voice Backend URL (optional override)
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    id="cosmic-backend-url"
+                    type="url"
+                    value={serverDraft}
+                    onChange={(e) => setServerDraft(e.target.value)}
+                    placeholder="Same origin (leave blank on web)"
+                    className="min-w-0 flex-1 rounded-md border border-white/15 bg-[#0a0d16] px-2 py-1 text-[11px] text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ok = onUpdateBackendUrl(serverDraft);
+                      setServerSavedMsg(
+                        ok ? 'Saved.' : 'Enter a valid https:// URL (or blank for default).',
+                      );
+                    }}
+                    className="rounded-md border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-white/15"
+                  >
+                    Save
+                  </button>
+                </div>
+                {serverSavedMsg && (
+                  <p className="text-[10px] text-sky-300">{serverSavedMsg}</p>
+                )}
+              </div>
             </div>
 
             <div className="space-y-2.5 rounded-lg border border-white/10 bg-[#131726] p-3">

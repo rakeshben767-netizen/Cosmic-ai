@@ -7,38 +7,38 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
-import android.view.View
 import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.EditText
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.webkit.WebViewAssetLoader
 import com.cosmicai.bridge.CosmicNativeBridge
+import com.unity3d.ads.IUnityAdsInitializationListener
+import com.unity3d.ads.IUnityAdsLoadListener
+import com.unity3d.ads.IUnityAdsShowListener
+import com.unity3d.ads.UnityAds
+import com.unity3d.ads.UnityAdsShowOptions
+import java.util.concurrent.ConcurrentHashMap
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var webView: WebView
-    private lateinit var errorOverlay: LinearLayout
-    private lateinit var errorText: TextView
-    private var pendingWebPermissionRequest: PermissionRequest? = null
-
-    private val prefs by lazy {
-        getSharedPreferences("cosmic_ai_prefs", MODE_PRIVATE)
+    companion object {
+        private const val UNITY_GAME_ID = "800447797"
+        private const val PLACEMENT_INTERSTITIAL = "BP_Interstitial_Android"
+        private const val PLACEMENT_REWARDED = "BP_Rewarded_Android"
     }
+
+    private lateinit var webView: WebView
+    private var pendingWebPermissionRequest: PermissionRequest? = null
+    private val readyPlacements = ConcurrentHashMap<String, Boolean>()
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -59,9 +59,32 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        val root = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#0D101B"))
-        }
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/") { path ->
+                val cleanPath = if (path.isEmpty() || path == "/") "index.html" else path.trimStart('/')
+                try {
+                    val stream = assets.open("cosmic/$cleanPath")
+                    val mimeType = when {
+                        cleanPath.endsWith(".html") -> "text/html"
+                        cleanPath.endsWith(".js") || cleanPath.endsWith(".mjs") -> "application/javascript"
+                        cleanPath.endsWith(".css") -> "text/css"
+                        cleanPath.endsWith(".json") -> "application/json"
+                        cleanPath.endsWith(".svg") -> "image/svg+xml"
+                        cleanPath.endsWith(".png") -> "image/png"
+                        cleanPath.endsWith(".jpg") || cleanPath.endsWith(".jpeg") -> "image/jpeg"
+                        cleanPath.endsWith(".woff2") -> "font/woff2"
+                        else -> "application/octet-stream"
+                    }
+                    val headers = mapOf(
+                        "Access-Control-Allow-Origin" to "*",
+                        "Cache-Control" to "no-cache"
+                    )
+                    WebResourceResponse(mimeType, "UTF-8", 200, "OK", headers, stream)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            .build()
 
         webView = WebView(this).apply {
             setBackgroundColor(Color.parseColor("#0D101B"))
@@ -74,57 +97,25 @@ class MainActivity : AppCompatActivity() {
                 useWideViewPort = true
                 loadWithOverviewMode = true
             }
-            addJavascriptInterface(CosmicNativeBridge(this@MainActivity), "CosmicAndroidBridge")
-        }
-
-        errorText = TextView(this).apply {
-            setTextColor(Color.parseColor("#E2E8F0"))
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setPadding(24, 0, 24, 24)
-        }
-
-        val retryBtn = Button(this).apply {
-            text = "Retry Connection"
-            setOnClickListener {
-                errorOverlay.visibility = View.GONE
-                webView.loadUrl(getConfiguredServerUrl())
-            }
-        }
-
-        val urlBtn = Button(this).apply {
-            text = "Set Server URL"
-            setOnClickListener { promptServerUrl() }
-        }
-
-        errorOverlay = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#0D101B"))
-            setPadding(48, 48, 48, 48)
-            visibility = View.GONE
-            addView(errorText)
-            addView(retryBtn)
-            addView(urlBtn)
-        }
-
-        root.addView(
-            webView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
+            addJavascriptInterface(
+                CosmicNativeBridge(this@MainActivity) { placementId, callbackId ->
+                    showUnityAd(placementId, callbackId)
+                },
+                "CosmicAndroidBridge"
             )
-        )
-        root.addView(
-            errorOverlay,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-        setContentView(root)
+        }
+
+        setContentView(webView)
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                val url = request?.url ?: return null
+                return assetLoader.shouldInterceptRequest(url)
+            }
+
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -135,31 +126,14 @@ class MainActivity : AppCompatActivity() {
                     startActivity(Intent(Intent.ACTION_VIEW, url))
                     return true
                 }
-                val activeHost = Uri.parse(getConfiguredServerUrl()).host
-                if (scheme == "https" && url.host != activeHost) {
+                if (url.host == "appassets.androidplatform.net") {
+                    return false
+                }
+                if (scheme == "https") {
                     startActivity(Intent(Intent.ACTION_VIEW, url))
                     return true
                 }
                 return false
-            }
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                if (url != null && !url.startsWith("about:")) {
-                    errorOverlay.visibility = View.GONE
-                }
-            }
-
-            override fun onReceivedError(
-                view: WebView?,
-                request: WebResourceRequest?,
-                error: WebResourceError?
-            ) {
-                if (request?.isForMainFrame == true) {
-                    errorText.text =
-                        "Unable to reach COSMIC AI server (${error?.description ?: "Network error"}).\n\nURL: ${getConfiguredServerUrl()}"
-                    errorOverlay.visibility = View.VISIBLE
-                }
             }
         }
 
@@ -196,8 +170,107 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        initUnityAds()
         requestInitialPermissions()
-        webView.loadUrl(getConfiguredServerUrl())
+        webView.loadUrl("https://appassets.androidplatform.net/index.html")
+    }
+
+    private fun initUnityAds() {
+        UnityAds.initialize(
+            applicationContext,
+            UNITY_GAME_ID,
+            false,
+            object : IUnityAdsInitializationListener {
+                override fun onInitializationComplete() {
+                    loadPlacement(PLACEMENT_INTERSTITIAL)
+                    loadPlacement(PLACEMENT_REWARDED)
+                }
+
+                override fun onInitializationFailed(
+                    error: UnityAds.UnityAdsInitializationError?,
+                    message: String?
+                ) {
+                    readyPlacements[PLACEMENT_INTERSTITIAL] = false
+                    readyPlacements[PLACEMENT_REWARDED] = false
+                }
+            }
+        )
+    }
+
+    private fun loadPlacement(placementId: String) {
+        readyPlacements[placementId] = false
+        UnityAds.load(placementId, object : IUnityAdsLoadListener {
+            override fun onUnityAdsAdLoaded(pid: String?) {
+                readyPlacements[pid ?: placementId] = true
+            }
+
+            override fun onUnityAdsFailedToLoad(
+                pid: String?,
+                error: UnityAds.UnityAdsLoadError?,
+                message: String?
+            ) {
+                readyPlacements[pid ?: placementId] = false
+            }
+        })
+    }
+
+    private fun dispatchAdResult(callbackId: String, completed: Boolean, placementId: String) {
+        val safeCallback = callbackId.replace(Regex("[^a-zA-Z0-9_-]"), "")
+        val safePlacement = placementId.replace(Regex("[^a-zA-Z0-9_-]"), "")
+        runOnUiThread {
+            if (::webView.isInitialized) {
+                webView.evaluateJavascript(
+                    "window.__cosmicOnUnityAdResult && window.__cosmicOnUnityAdResult('$safeCallback', $completed, '$safePlacement');",
+                    null
+                )
+            }
+        }
+    }
+
+    private fun showUnityAd(placementId: String, callbackId: String) {
+        runOnUiThread {
+            val isReady = readyPlacements[placementId] == true
+            if (!UnityAds.isInitialized || !isReady) {
+                if (UnityAds.isInitialized) {
+                    loadPlacement(placementId)
+                } else {
+                    initUnityAds()
+                }
+                dispatchAdResult(callbackId, false, placementId)
+                return@runOnUiThread
+            }
+
+            readyPlacements[placementId] = false
+            UnityAds.show(
+                this@MainActivity,
+                placementId,
+                UnityAdsShowOptions(),
+                object : IUnityAdsShowListener {
+                    override fun onUnityAdsShowFailure(
+                        pid: String?,
+                        error: UnityAds.UnityAdsShowError?,
+                        message: String?
+                    ) {
+                        loadPlacement(placementId)
+                        dispatchAdResult(callbackId, false, placementId)
+                    }
+
+                    override fun onUnityAdsShowStart(pid: String?) {}
+
+                    override fun onUnityAdsShowClick(pid: String?) {}
+
+                    override fun onUnityAdsShowComplete(
+                        pid: String?,
+                        state: UnityAds.UnityAdsShowCompletionState?
+                    ) {
+                        loadPlacement(placementId)
+                        val completed = state == UnityAds.UnityAdsShowCompletionState.COMPLETED ||
+                            state == UnityAds.UnityAdsShowCompletionState.SKIPPED
+                        dispatchAdResult(callbackId, completed, placementId)
+                    }
+                }
+            )
+        }
     }
 
     private fun hasRecordAudio(): Boolean {
@@ -222,35 +295,6 @@ class MainActivity : AppCompatActivity() {
         if (needed.isNotEmpty()) {
             requestPermissionsLauncher.launch(needed.toTypedArray())
         }
-    }
-
-    private fun getConfiguredServerUrl(): String {
-        val saved = prefs.getString("server_url", null)?.trim()
-        if (!saved.isNullOrEmpty() && saved.startsWith("https://")) {
-            return saved
-        }
-        return getString(R.string.cosmic_server_url)
-    }
-
-    private fun promptServerUrl() {
-        val input = EditText(this).apply {
-            setText(getConfiguredServerUrl())
-            hint = "https://your-cosmic-ai-url"
-        }
-        AlertDialog.Builder(this)
-            .setTitle("COSMIC AI Server URL")
-            .setMessage("Enter the HTTPS URL where your COSMIC AI backend is hosted:")
-            .setView(input)
-            .setPositiveButton("Connect") { _, _ ->
-                val nextUrl = input.text.toString().trim()
-                if (nextUrl.startsWith("https://")) {
-                    prefs.edit().putString("server_url", nextUrl).apply()
-                    errorOverlay.visibility = View.GONE
-                    webView.loadUrl(nextUrl)
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     override fun onDestroy() {

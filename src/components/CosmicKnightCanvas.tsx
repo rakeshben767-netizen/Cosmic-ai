@@ -296,6 +296,8 @@ export function CosmicKnightCanvas({
     const normalRimColor = new THREE.Color(0x38bdf8);
     const badmashRimColor = new THREE.Color(0xc084fc);
     const badmashEmberColor = new THREE.Color(0xf97316);
+    const badmashAuraBase = new THREE.Color(0xa855f7);
+    const normalAuraBase = new THREE.Color(0x22d3ee);
     const normalParticleColor = new THREE.Color(0x38bdf8);
     const errorColor = new THREE.Color(0xef4444);
     const targetBg = new THREE.Color();
@@ -401,57 +403,69 @@ export function CosmicKnightCanvas({
       const breathFreq = currentState === 'SPEAKING' ? 4.2 : 1.9;
       activeRig.upperBody.position.y = 1.155 + Math.sin(elapsed * breathFreq) * breathAmp;
 
-      // Subtle commanding head & posture response
+      // Subtle commanding head & posture response (extra Don lean-in in Badmash Mode)
       if (currentState === 'SPEAKING') {
-        activeRig.headGroup.rotation.y = Math.sin(elapsed * 2.4) * 0.09;
-        activeRig.headGroup.rotation.x = Math.sin(elapsed * 5.2) * 0.05 * (0.4 + smoothedAudio);
-        activeRig.upperBody.rotation.y = Math.sin(elapsed * 1.6) * 0.05;
-        activeRig.leftArmGroup.rotation.z = Math.sin(elapsed * 4.5) * 0.06 * smoothedAudio;
-        activeRig.rightArmGroup.rotation.x = Math.sin(elapsed * 3.1) * 0.03;
+        const swagger = isBadmash ? 1.35 : 1.0;
+        activeRig.headGroup.rotation.y = Math.sin(elapsed * 2.4) * 0.09 * swagger;
+        activeRig.headGroup.rotation.x = Math.sin(elapsed * 5.2) * 0.055 * (0.4 + smoothedAudio);
+        activeRig.upperBody.rotation.y = Math.sin(elapsed * 1.6) * 0.055 * swagger;
+        activeRig.upperBody.rotation.x = isBadmash ? 0.035 + smoothedAudio * 0.045 : 0;
+        activeRig.leftArmGroup.rotation.z = Math.sin(elapsed * 4.5) * 0.065 * smoothedAudio * swagger;
+        activeRig.rightArmGroup.rotation.x = Math.sin(elapsed * 3.1) * 0.035 * swagger;
       } else if (currentState === 'LISTENING') {
         activeRig.headGroup.rotation.y = Math.sin(elapsed * 0.9) * 0.04;
         activeRig.headGroup.rotation.x = 0.05;
         activeRig.upperBody.rotation.y = Math.sin(elapsed * 0.7) * 0.025;
+        activeRig.upperBody.rotation.x = 0;
         activeRig.leftArmGroup.rotation.z = 0;
         activeRig.rightArmGroup.rotation.x = 0;
       } else if (currentState === 'CONNECTING') {
         activeRig.upperBody.rotation.y = Math.sin(elapsed * 2.8) * 0.06;
+        activeRig.upperBody.rotation.x = 0;
         activeRig.headGroup.rotation.x = -0.04;
       } else {
         activeRig.headGroup.rotation.y = Math.sin(elapsed * 0.75) * 0.05;
         activeRig.headGroup.rotation.x = Math.sin(elapsed * 1.2) * 0.02;
         activeRig.upperBody.rotation.y = Math.sin(elapsed * 0.65) * 0.03;
+        activeRig.upperBody.rotation.x = 0;
         activeRig.leftArmGroup.rotation.z = Math.sin(elapsed * 1.4) * 0.02;
         activeRig.rightArmGroup.rotation.x = 0;
       }
 
       // Flowing cape sway
-      const capeEnergy = 1 + smoothedAudio * 2.4;
+      const capeEnergy = 1 + smoothedAudio * (isBadmash ? 2.9 : 2.4);
       for (let i = 0; i < activeRig.capeFronds.length; i++) {
         const frond = activeRig.capeFronds[i];
         const baseX = 0.24;
         frond.rotation.x = baseX + Math.sin(elapsed * 2.1 + i * 0.8) * 0.045 * capeEnergy;
       }
 
-      // Purple Knight cosmic halo rotation & glow surge
+      // Purple Knight cosmic halo rotation & audio-reactive pulse surge
       if (activeRig.haloRing) {
-        activeRig.haloRing.rotation.z = elapsed * (currentState === 'SPEAKING' ? 0.38 : 0.14);
+        activeRig.haloRing.rotation.z = elapsed * (currentState === 'SPEAKING' ? 0.52 : 0.16);
+        const haloScale = currentState === 'SPEAKING' ? 1 + smoothedAudio * 0.06 : 1;
+        activeRig.haloRing.scale.setScalar(haloScale);
       }
       if (activeRig.haloPortal) {
-        activeRig.haloPortal.rotation.z = -elapsed * (currentState === 'SPEAKING' ? 0.75 : 0.25);
+        activeRig.haloPortal.rotation.z = -elapsed * (currentState === 'SPEAKING' ? 0.95 : 0.28);
       }
 
       // Voice-reactive emissive glow on armor & sword
       const glowMult =
         currentState === 'SPEAKING'
-          ? 1.18 + smoothedAudio * 1.15
+          ? (isBadmash ? 1.32 : 1.18) + smoothedAudio * (isBadmash ? 1.35 : 1.15)
           : currentState === 'LISTENING'
             ? 0.98 + Math.sin(elapsed * 4.5) * 0.16
             : 0.78 + Math.sin(elapsed * 2.0) * 0.08;
       for (const mat of activeRig.emissiveMaterials) {
         mat.emissiveIntensity = glowMult;
       }
-      activeRig.auraLight.intensity = (isBadmash ? 2.6 : 2.2) * (0.85 + smoothedAudio * 0.9);
+      if (isBadmash) {
+        activeRig.auraLight.color.copy(badmashAuraBase).lerp(badmashEmberColor, Math.min(0.6, smoothedAudio * 0.85));
+      } else {
+        activeRig.auraLight.color.copy(normalAuraBase);
+      }
+      activeRig.auraLight.intensity = (isBadmash ? 2.85 : 2.2) * (0.85 + smoothedAudio * 0.95);
 
       // Update floating particles
       const posAttr = particleGeo.getAttribute('position') as THREE.BufferAttribute;

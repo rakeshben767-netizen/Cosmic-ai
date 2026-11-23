@@ -6,11 +6,10 @@ import {
   Power,
   RotateCcw,
   Send,
-  SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
-import { DiagnosticsDrawer } from './components/DiagnosticsDrawer.tsx';
+import { UnityAdOverlay } from './components/UnityAdOverlay.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
 
@@ -22,24 +21,19 @@ export default function App() {
     errorMessage,
     micNotice,
     transcripts,
-    actionLogs,
-    diagnosticLogs,
     diagnostics,
-    speakerTestResult,
-    bridgeRuntime,
+    activeAd,
+    completeWebAd,
     audioLevelRef,
     togglePower,
     toggleMicMute,
     toggleBadmashMode,
     retryMicrophone,
     sendTextMessage,
-    testSpeaker,
-    runManualSafeAction,
     clearError,
     clearMicNotice,
   } = useCosmicLive();
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [cameraResetTick, setCameraResetTick] = useState(0);
   const [fallbackDraft, setFallbackDraft] = useState('');
 
@@ -120,39 +114,13 @@ export default function App() {
           >
             <RotateCcw className="h-4 w-4" />
           </button>
-
-          <button
-            type="button"
-            onClick={() => setDrawerOpen((o) => !o)}
-            aria-expanded={drawerOpen}
-            aria-label="Toggle audio diagnostics and safe actions drawer"
-            className={`flex h-10 items-center gap-2 rounded-lg border px-3 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-sky-400 ${
-              drawerOpen
-                ? isBadmash
-                  ? 'border-purple-400/60 bg-purple-950/90 text-purple-100'
-                  : 'border-sky-400/60 bg-sky-950/90 text-sky-100'
-                : 'border-white/12 bg-[#0d101b]/90 text-slate-200 hover:border-white/25 hover:text-white'
-            }`}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Diagnostics &amp; Actions</span>
-          </button>
         </div>
       </header>
 
-      {/* Collapsible Diagnostics & Safe Actions Drawer */}
-      <DiagnosticsDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        mode={mode}
-        diagnostics={diagnostics}
-        speakerTestResult={speakerTestResult}
-        bridgeRuntime={bridgeRuntime}
-        transcripts={transcripts}
-        actionLogs={actionLogs}
-        diagnosticLogs={diagnosticLogs}
-        onTestSpeaker={testSpeaker}
-        onRunSafeAction={runManualSafeAction}
+      <UnityAdOverlay
+        placement={activeAd?.placement ?? null}
+        reason={activeAd?.reason ?? ''}
+        onComplete={completeWebAd}
       />
 
       {/* Error Banner, Mic Recovery Notice, Fallback Input & Live Caption Strip above Bottom Dock */}
@@ -309,7 +277,7 @@ export default function App() {
             role="switch"
             aria-checked={isBadmash}
             aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
-            onClick={toggleBadmashMode}
+            onClick={() => void toggleBadmashMode()}
             data-testid="badmash-mode-toggle"
             className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold tracking-wide whitespace-nowrap transition-all duration-200 focus-visible:outline-2 focus-visible:outline-orange-400 ${
               isBadmash

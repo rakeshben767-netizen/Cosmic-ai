@@ -20,6 +20,11 @@ import {
 } from '../utils/pcmAudio.ts';
 import { executeSafeToolCall } from '../utils/safeActions.ts';
 import { detectBridgeEnvironment, getCosmicNativeBridge } from '../utils/androidBridge.ts';
+import {
+  triggerUnityAd,
+  UNITY_ADS_CONFIG,
+  type WebAdPromptRequest,
+} from '../utils/unityAds.ts';
 
 const WORKLET_PROCESSOR_CODE = `
 class CosmicMicProcessor extends AudioWorkletProcessor {
@@ -59,16 +64,52 @@ interface ServerWsMessage {
   calls?: ToolCallPayload[];
 }
 
+const DEFAULT_ANDROID_BACKEND_URL =
+  'https://ais-pre-ewacjsnpswr655db2sqdfo-986483805469.asia-southeast1.run.app';
+const BACKEND_STORAGE_KEY = 'cosmic_backend_url';
+
+function isPackagedApkOrigin(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.location.hostname === 'appassets.androidplatform.net';
+}
+
+function getInitialBackendUrl(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    const saved = window.localStorage.getItem(BACKEND_STORAGE_KEY)?.trim() || '';
+    if (saved && /^https?:\/\//i.test(saved)) return saved;
+  } catch {
+    // ignore storage errors
+  }
+  return isPackagedApkOrigin() ? DEFAULT_ANDROID_BACKEND_URL : '';
+}
+
+export function resolveLiveWsUrl(customBackendUrl: string): string {
+  const trimmed = customBackendUrl.trim().replace(/\/+$/, '');
+  if (trimmed && /^https?:\/\//i.test(trimmed)) {
+    const wsBase = trimmed.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
+    return `${wsBase}/live`;
+  }
+  if (isPackagedApkOrigin()) {
+    const wsBase = DEFAULT_ANDROID_BACKEND_URL.replace(/^https:\/\//i, 'wss://');
+    return `${wsBase}/live`;
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/live`;
+}
+
 export function useCosmicLive() {
   const [mode, setMode] = useState<CosmicMode>('normal');
   const [cosmicState, setCosmicState] = useState<CosmicState>('IDLE');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [micNotice, setMicNotice] = useState<string | null>(null);
+  const [backendUrl, setBackendUrlState] = useState<string>(() => getInitialBackendUrl());
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
   const [speakerTestResult, setSpeakerTestResult] = useState<string | null>(null);
+  const [activeAd, setActiveAd] = useState<WebAdPromptRequest | null>(null);
   const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
     contextState: 'uninitialized',
     sampleRate: 0,
@@ -87,8 +128,9 @@ export function useCosmicLive() {
   const isMicMutedRef = useRef<boolean>(isMicMuted);
   const audioLevelRef = useRef<number>(0);
 
-  // Persistent single AudioContext + GainNode -> destination
+  // Persistent single AudioContext + Badmash EQ -> GainNode -> Analyser -> destination
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const badmashBassFilterRef = useRef<BiquadFilterNode | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
   const outputAnalyserRef = useRef<AnalyserNode | null>(null);
 
@@ -104,9 +146,18 @@ export function useCosmicLive() {
   const wsRef = useRef<WebSocket | null>(null);
   const meterTimerRef = useRef<number | null>(null);
   const bridgeEnv = useRef(detectBridgeEnvironment());
+  const isAdShowingRef = useRef<boolean>(false);
+  const badmashQuestionCountRef = useRef<number>(0);
+  const pendingVoiceTurnQuestionRef = useRef<boolean>(false);
+  const pendingBadmashAdAfterTurnRef = useRef<boolean>(false);
 
   useEffect(() => {
     modeRef.current = mode;
+    const bassFilter = badmashBassFilterRef.current;
+    const ctx = audioCtxRef.current;
+    if (bassFilter && ctx && ctx.state !== 'closed') {
+      bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 4.5 : 0, ctx.currentTime, 0.06);
+    }
   }, [mode]);
 
   useEffect(() => {
@@ -178,16 +229,23 @@ export function useCosmicLive() {
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       ctx = new AudioCtx({ latencyHint: 'interactive' });
+      const bassFilter = ctx.createBiquadFilter();
+      bassFilter.type = 'lowshelf';
+      bassFilter.frequency.value = 145;
+      bassFilter.gain.value = modeRef.current === 'badmash' ? 4.5 : 0;
+
       const gain = ctx.createGain();
       gain.gain.value = 1.0;
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
 
+      bassFilter.connect(gain);
       gain.connect(analyser);
       analyser.connect(ctx.destination);
 
       audioCtxRef.current = ctx;
+      badmashBassFilterRef.current = bassFilter;
       masterGainRef.current = gain;
       outputAnalyserRef.current = analyser;
 
@@ -262,7 +320,7 @@ export function useCosmicLive() {
 
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(gainNode);
+        source.connect(badmashBassFilterRef.current ?? gainNode);
 
         const now = ctx.currentTime;
         const startAt = Math.max(now + 0.015, nextStartTimeRef.current);
@@ -540,14 +598,37 @@ export function useCosmicLive() {
       }
 
       if (msg.type === 'turn_complete') {
+        pendingVoiceTurnQuestionRef.current = false;
         if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
           setCosmicState('LISTENING');
+        }
+        if (
+          modeRef.current === 'badmash' &&
+          pendingBadmashAdAfterTurnRef.current &&
+          !isAdShowingRef.current
+        ) {
+          pendingBadmashAdAfterTurnRef.current = false;
+          isAdShowingRef.current = true;
+          void triggerUnityAd(
+            UNITY_ADS_CONFIG.rewardedPlacement,
+            'Badmash Mode Ad Break (every 2 questions)',
+            (req) => setActiveAd(req),
+          ).finally(() => {
+            isAdShowingRef.current = false;
+          });
         }
         return;
       }
 
       if (msg.type === 'input_transcript' && msg.text) {
         appendTranscript('user', msg.text);
+        if (modeRef.current === 'badmash' && !pendingVoiceTurnQuestionRef.current) {
+          pendingVoiceTurnQuestionRef.current = true;
+          badmashQuestionCountRef.current += 1;
+          if (badmashQuestionCountRef.current % 2 === 0) {
+            pendingBadmashAdAfterTurnRef.current = true;
+          }
+        }
         return;
       }
 
@@ -657,8 +738,7 @@ export function useCosmicLive() {
         wsRef.current = null;
       }
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/live`;
+      const wsUrl = resolveLiveWsUrl(backendUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -677,8 +757,12 @@ export function useCosmicLive() {
       };
 
       ws.onerror = () => {
-        addLog('error', 'gemini', 'WebSocket transport error connecting to /live.');
-        setErrorMessage('Voice transport error. Check server status and retry.');
+        addLog('warn', 'gemini', `WebSocket transport error connecting to ${wsUrl}.`);
+        setErrorMessage(
+          isPackagedApkOrigin()
+            ? `Live voice server unreachable (${wsUrl}). Deploy/Share the COSMIC AI server or set your server URL in Diagnostics & Actions.`
+            : 'Voice transport error. Check server status and retry.',
+        );
         setCosmicState('ERROR');
       };
 
@@ -699,7 +783,15 @@ export function useCosmicLive() {
       setCosmicState('ERROR');
       stopMicrophone();
     }
-  }, [addLog, clearAudioQueue, ensureAudioContext, handleServerMessage, startMicrophone, stopMicrophone]);
+  }, [
+    addLog,
+    backendUrl,
+    clearAudioQueue,
+    ensureAudioContext,
+    handleServerMessage,
+    startMicrophone,
+    stopMicrophone,
+  ]);
 
   const retryMicrophone = useCallback(async () => {
     try {
@@ -726,6 +818,12 @@ export function useCosmicLive() {
       }
       clearAudioQueue('user-text-interrupt');
       appendTranscript('user', trimmed);
+      if (modeRef.current === 'badmash') {
+        badmashQuestionCountRef.current += 1;
+        if (badmashQuestionCountRef.current % 2 === 0) {
+          pendingBadmashAdAfterTurnRef.current = true;
+        }
+      }
       ws.send(JSON.stringify({ type: 'text', text: trimmed }));
     },
     [appendTranscript, clearAudioQueue, ensureAudioContext],
@@ -755,27 +853,41 @@ export function useCosmicLive() {
     });
   }, [addLog, connect, retryMicrophone]);
 
-  const toggleBadmashMode = useCallback(() => {
-    setMode((prev) => {
-      const next: CosmicMode = prev === 'normal' ? 'badmash' : 'normal';
-      addLog(
-        'info',
-        'gemini',
-        next === 'badmash'
-          ? 'BADMASH MODE ON -> Switching to Purple Knight + Deep Don voice (Charon).'
-          : 'NORMAL MODE ON -> Switching to Blue Knight + Friendly voice (Zephyr).',
+  const toggleBadmashMode = useCallback(async () => {
+    if (isAdShowingRef.current) return;
+    const next: CosmicMode = modeRef.current === 'normal' ? 'badmash' : 'normal';
+    isAdShowingRef.current = true;
+    try {
+      await triggerUnityAd(
+        UNITY_ADS_CONFIG.interstitialPlacement,
+        next === 'badmash' ? 'Unlocking Extreme Badmash Mode...' : 'Switching to Normal Mode...',
+        (req) => setActiveAd(req),
       );
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        clearAudioQueue('mode-switch');
-        wsRef.current.send(
-          JSON.stringify({
-            type: 'set_mode',
-            badmashMode: next === 'badmash',
-          }),
-        );
-      }
-      return next;
-    });
+    } finally {
+      isAdShowingRef.current = false;
+    }
+
+    badmashQuestionCountRef.current = 0;
+    pendingVoiceTurnQuestionRef.current = false;
+    pendingBadmashAdAfterTurnRef.current = false;
+
+    setMode(next);
+    addLog(
+      'info',
+      'gemini',
+      next === 'badmash'
+        ? 'BADMASH MODE ON -> Switching to Purple Knight + Deep Don voice (Charon).'
+        : 'NORMAL MODE ON -> Switching to Blue Knight + Friendly voice (Zephyr).',
+    );
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      clearAudioQueue('mode-switch');
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'set_mode',
+          badmashMode: next === 'badmash',
+        }),
+      );
+    }
   }, [addLog, clearAudioQueue]);
 
   const testSpeaker = useCallback(async () => {
@@ -884,17 +996,52 @@ export function useCosmicLive() {
     };
   }, [clearAudioQueue, stopMicrophone]);
 
+  const updateBackendUrl = useCallback(
+    (nextUrl: string) => {
+      const cleaned = nextUrl.trim().replace(/\/+$/, '');
+      if (cleaned && !/^https:\/\//i.test(cleaned) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(cleaned)) {
+        addLog('warn', 'bridge', 'Backend server URL must use HTTPS.');
+        return false;
+      }
+      try {
+        if (cleaned) {
+          window.localStorage.setItem(BACKEND_STORAGE_KEY, cleaned);
+        } else {
+          window.localStorage.removeItem(BACKEND_STORAGE_KEY);
+        }
+      } catch {
+        // ignore storage errors
+      }
+      setBackendUrlState(cleaned || (isPackagedApkOrigin() ? DEFAULT_ANDROID_BACKEND_URL : ''));
+      addLog('info', 'bridge', cleaned ? `Updated voice backend URL -> ${cleaned}` : 'Reset voice backend URL to default.');
+      return true;
+    },
+    [addLog],
+  );
+
+  const completeWebAd = useCallback((completed: boolean) => {
+    setActiveAd((current) => {
+      if (current) {
+        current.resolve(completed);
+      }
+      return null;
+    });
+  }, []);
+
   return {
     mode,
     cosmicState,
     isMicMuted,
     errorMessage,
     micNotice,
+    backendUrl,
     transcripts,
     actionLogs,
     diagnosticLogs,
     diagnostics,
     speakerTestResult,
+    activeAd,
+    completeWebAd,
     bridgeRuntime: bridgeEnv.current,
     audioLevelRef,
     togglePower,
@@ -904,6 +1051,7 @@ export function useCosmicLive() {
     sendTextMessage,
     testSpeaker,
     runManualSafeAction,
+    updateBackendUrl,
     clearError: () => setErrorMessage(null),
     clearMicNotice: () => setMicNotice(null),
   };
