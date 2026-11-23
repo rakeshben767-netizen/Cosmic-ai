@@ -1,4 +1,4 @@
-import { ExternalLink, ShieldCheck, X } from 'lucide-react';
+import { ShieldCheck, X } from 'lucide-react';
 
 interface PrivacyPolicyModalProps {
   open: boolean;
@@ -92,21 +92,7 @@ export function PrivacyPolicyModal({ open, onClose }: PrivacyPolicyModalProps) {
           </section>
         </div>
 
-        <div className="flex items-center justify-between border-t border-white/10 px-5 py-3">
-          <a
-            href={
-              typeof window !== 'undefined' &&
-              window.location.hostname === 'appassets.androidplatform.net'
-                ? 'https://cosmic-ai-2.onrender.com/privacy-policy'
-                : '/privacy-policy.html'
-            }
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-300 hover:text-sky-200"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            <span>Open Standalone Page</span>
-          </a>
+        <div className="flex items-center justify-end border-t border-white/10 px-5 py-3">
           <button
             type="button"
             onClick={onClose}
