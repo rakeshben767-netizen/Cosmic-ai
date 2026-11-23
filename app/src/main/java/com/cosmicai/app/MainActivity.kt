@@ -41,7 +41,12 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val UNITY_GAME_ID = "800447797"
         private const val UNITY_TEST_MODE = false
-        private const val PLACEMENT_REWARDED = "BP_Rewarded_Android"
+        private const val PLACEMENT_REWARDED_PRIMARY = "Rewarded_Android"
+        private const val PLACEMENT_REWARDED_LEGACY = "BP_Rewarded_Android"
+        private val REWARDED_PLACEMENTS = listOf(
+            PLACEMENT_REWARDED_PRIMARY,
+            PLACEMENT_REWARDED_LEGACY
+        )
     }
 
     private lateinit var webView: WebView
@@ -211,9 +216,13 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://appassets.androidplatform.net/index.html")
     }
 
+    private fun findReadyRewardedPlacement(): String? {
+        return REWARDED_PLACEMENTS.firstOrNull { readyPlacements[it] == true }
+    }
+
     private fun initUnityAds() {
         if (UnityAds.isInitialized) {
-            loadPlacement(PLACEMENT_REWARDED)
+            loadRewardedPlacements()
             return
         }
         UnityAds.initialize(
@@ -224,7 +233,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onInitializationComplete() {
                     runOnUiThread {
                         lastAdErrorReason = ""
-                        loadPlacement(PLACEMENT_REWARDED)
+                        loadRewardedPlacements()
                     }
                 }
 
@@ -234,8 +243,10 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     val reason = "Unity init failed (${error?.name ?: "UNKNOWN"}): ${message ?: "check network/Game ID"}"
                     runOnUiThread {
-                        readyPlacements[PLACEMENT_REWARDED] = false
-                        loadingPlacements[PLACEMENT_REWARDED] = false
+                        for (pid in REWARDED_PLACEMENTS) {
+                            readyPlacements[pid] = false
+                            loadingPlacements[pid] = false
+                        }
                         lastAdErrorReason = reason
                         resolvePendingShowFailure(reason)
                         mainHandler.postDelayed({
@@ -247,6 +258,12 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun loadRewardedPlacements() {
+        for (pid in REWARDED_PLACEMENTS) {
+            loadPlacement(pid)
+        }
     }
 
     private fun loadPlacement(placementId: String) {
@@ -277,12 +294,26 @@ class MainActivity : AppCompatActivity() {
                 message: String?
             ) {
                 val targetPid = pid ?: placementId
-                val reason = "Unity ad failed (${error?.name ?: "NO_FILL"}): ${message ?: "no ad available right now"}"
+                val rawMsg = message ?: "no ad available right now"
+                val reason = if (rawMsg.contains("adMarkup", ignoreCase = true) ||
+                    rawMsg.contains("objectId", ignoreCase = true)
+                ) {
+                    "Unity Dashboard error ($targetPid is set to Bidding/Mediation). Create a non-bidding Waterfall placement named 'Rewarded_Android' in Unity Dashboard."
+                } else {
+                    "Unity ad failed [$targetPid] (${error?.name ?: "NO_FILL"}): $rawMsg"
+                }
                 runOnUiThread {
                     loadingPlacements[targetPid] = false
                     readyPlacements[targetPid] = false
-                    lastAdErrorReason = reason
-                    resolvePendingShowFailure(reason)
+                    if (findReadyRewardedPlacement() == null) {
+                        lastAdErrorReason = reason
+                    }
+                    val anyOtherLoadingOrReady = REWARDED_PLACEMENTS.any {
+                        readyPlacements[it] == true || loadingPlacements[it] == true
+                    }
+                    if (!anyOtherLoadingOrReady) {
+                        resolvePendingShowFailure(lastAdErrorReason.ifEmpty { reason })
+                    }
                     mainHandler.postDelayed({
                         if (!isDestroyed && UnityAds.isInitialized) {
                             loadPlacement(targetPid)
@@ -298,7 +329,7 @@ class MainActivity : AppCompatActivity() {
         pendingShowCallbackId = null
         pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         pendingShowTimeoutRunnable = null
-        dispatchAdResult(pendingCb, false, PLACEMENT_REWARDED, reason)
+        dispatchAdResult(pendingCb, false, PLACEMENT_REWARDED_PRIMARY, reason)
     }
 
     private fun dispatchAdResult(
@@ -322,18 +353,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun showUnityAd(callbackId: String) {
         runOnUiThread {
-            if (readyPlacements[PLACEMENT_REWARDED] == true) {
+            val readyPid = findReadyRewardedPlacement()
+            if (readyPid != null) {
                 pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
                 pendingShowTimeoutRunnable = null
                 pendingShowCallbackId = null
-                showReadyAd(PLACEMENT_REWARDED, callbackId)
+                showReadyAd(readyPid, callbackId)
                 return@runOnUiThread
             }
 
             pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
             val previousCb = pendingShowCallbackId
             if (previousCb != null && previousCb != callbackId) {
-                dispatchAdResult(previousCb, false, PLACEMENT_REWARDED, "Superseded by newer ad request.")
+                dispatchAdResult(previousCb, false, PLACEMENT_REWARDED_PRIMARY, "Superseded by newer ad request.")
             }
 
             pendingShowCallbackId = callbackId
@@ -346,7 +378,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         "Rewarded ad is still loading. Try again in a few seconds."
                     }
-                    dispatchAdResult(callbackId, false, PLACEMENT_REWARDED, reason)
+                    dispatchAdResult(callbackId, false, PLACEMENT_REWARDED_PRIMARY, reason)
                 }
             }
             pendingShowTimeoutRunnable = timeoutRunnable
@@ -355,7 +387,7 @@ class MainActivity : AppCompatActivity() {
             if (!UnityAds.isInitialized) {
                 initUnityAds()
             } else {
-                loadPlacement(PLACEMENT_REWARDED)
+                loadRewardedPlacements()
             }
         }
     }

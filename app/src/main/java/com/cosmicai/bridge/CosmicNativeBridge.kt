@@ -196,8 +196,8 @@ class CosmicNativeBridge(
         if (safeId.isEmpty() || adRequester == null) {
             return jsonResult(false, "Native Unity Rewarded unavailable.")
         }
-        adRequester.invoke("BP_Rewarded_Android", safeId)
-        return jsonResult(true, "Triggered Unity Rewarded BP_Rewarded_Android.")
+        adRequester.invoke("Rewarded_Android", safeId)
+        return jsonResult(true, "Triggered Unity Rewarded.")
     }
 
     @JavascriptInterface
@@ -206,7 +206,7 @@ class CosmicNativeBridge(
             put("gameId", "800447797")
             put("organizationCoreId", "13470006284888")
             put("interstitialPlacement", "BP_Interstitial_Android")
-            put("rewardedPlacement", "BP_Rewarded_Android")
+            put("rewardedPlacement", "Rewarded_Android")
         }.toString()
     }
 }

@@ -2,7 +2,7 @@ export const UNITY_ADS_CONFIG = {
   gameId: '800447797',
   organizationCoreId: '13470006284888',
   interstitialPlacement: 'BP_Interstitial_Android',
-  rewardedPlacement: 'BP_Rewarded_Android',
+  rewardedPlacement: 'Rewarded_Android',
 } as const;
 
 export type UnityAdPlacement =
