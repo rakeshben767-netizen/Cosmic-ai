@@ -212,6 +212,12 @@ async function startServer() {
     });
   });
 
+  app.get(['/privacy-policy', '/privacy-policy.html'], (_req, res) => {
+    const prodFile = path.resolve(__dirname, 'dist', 'privacy-policy.html');
+    const publicFile = path.resolve(__dirname, 'public', 'privacy-policy.html');
+    res.sendFile(process.env.NODE_ENV === 'production' ? prodFile : publicFile);
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

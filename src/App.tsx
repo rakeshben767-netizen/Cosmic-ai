@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import {
   Flame,
+  Gift,
   Mic,
   MicOff,
   Power,
   RotateCcw,
   Send,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import { AdFreePassModal } from './components/AdFreePassModal.tsx';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
+import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
 import { UnityAdOverlay } from './components/UnityAdOverlay.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
@@ -24,6 +28,8 @@ export default function App() {
     diagnostics,
     activeAd,
     completeWebAd,
+    adPassStatus,
+    watchPassRewardAd,
     audioLevelRef,
     togglePower,
     toggleMicMute,
@@ -36,6 +42,8 @@ export default function App() {
 
   const [cameraResetTick, setCameraResetTick] = useState(0);
   const [fallbackDraft, setFallbackDraft] = useState('');
+  const [adPassModalOpen, setAdPassModalOpen] = useState(false);
+  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
 
   const isBadmash = mode === 'badmash';
   const isLive =
@@ -60,10 +68,10 @@ export default function App() {
         />
       </main>
 
-      {/* Top 3-Zone Header Bar (Solid/Translucent without backdrop-blur over WebGL) */}
-      <header className="pointer-events-none fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-4 px-4 py-3 sm:px-6">
-        <div className="pointer-events-auto flex items-center gap-3">
-          <span className="font-display text-lg font-bold tracking-wider text-white whitespace-nowrap shrink-0 sm:text-xl">
+      {/* Top 3-Zone Header Bar (Respects Android WindowInsets cleanly) */}
+      <header className="pointer-events-none fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-2 px-3.5 py-3 sm:px-6">
+        <div className="pointer-events-auto flex items-center gap-2">
+          <span className="font-display text-base font-bold tracking-wider text-white whitespace-nowrap shrink-0 sm:text-xl">
             COSMIC AI
           </span>
         </div>
@@ -104,13 +112,46 @@ export default function App() {
           </span>
         </div>
 
-        <div className="pointer-events-auto flex items-center gap-2 shrink-0">
+        <div className="pointer-events-auto flex items-center gap-1.5 shrink-0 sm:gap-2">
+          {/* Watch 20 Ads -> 12 Hours Ad-Free Pass */}
+          <button
+            type="button"
+            onClick={() => setAdPassModalOpen(true)}
+            data-testid="ad-free-pass-button"
+            aria-label="Open 12-hour ad-free pass"
+            className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold whitespace-nowrap transition-colors sm:h-10 sm:px-3 sm:text-xs ${
+              adPassStatus.isAdFreeActive
+                ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30'
+                : 'border-amber-400/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
+            }`}
+          >
+            <Gift className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              {adPassStatus.isAdFreeActive
+                ? `Free ${adPassStatus.remainingLabel}`
+                : `Ad-Free ${adPassStatus.watchedCount}/${adPassStatus.targetCount}`}
+            </span>
+          </button>
+
+          {/* Privacy Policy (Google Play Requirement) */}
+          <button
+            type="button"
+            onClick={() => setPrivacyModalOpen(true)}
+            data-testid="privacy-policy-button"
+            aria-label="Privacy Policy"
+            title="Privacy Policy"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/12 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/25 hover:text-white sm:h-10 sm:w-10"
+          >
+            <ShieldCheck className="h-4 w-4 text-sky-400" />
+          </button>
+
+          {/* Reset 3D Camera */}
           <button
             type="button"
             onClick={() => setCameraResetTick((t) => t + 1)}
             aria-label="Reset 3D camera view"
             title="Reset 3D view"
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/12 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/25 hover:text-white focus-visible:outline-2 focus-visible:outline-sky-400"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/12 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/25 hover:text-white sm:h-10 sm:w-10"
           >
             <RotateCcw className="h-4 w-4" />
           </button>
@@ -123,14 +164,24 @@ export default function App() {
         onComplete={completeWebAd}
       />
 
-      {/* Error Banner, Mic Recovery Notice, Fallback Input & Live Caption Strip above Bottom Dock */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-24 z-20 flex flex-col items-center gap-2 px-4">
+      <AdFreePassModal
+        open={adPassModalOpen}
+        adPass={adPassStatus}
+        onClose={() => setAdPassModalOpen(false)}
+        onWatchAd={watchPassRewardAd}
+        onOpenPrivacy={() => setPrivacyModalOpen(true)}
+      />
+
+      <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
+
+      {/* Unified Bottom Stack: Alerts, Mic Fallback & Caption sit cleanly ABOVE Dock with zero overlap */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-3 z-20 flex flex-col items-center gap-2.5 px-3">
         {errorMessage && (
           <div
             role="alert"
-            className="pointer-events-auto flex max-w-lg items-center justify-between gap-3 rounded-lg border border-red-500/40 bg-[#1a0d12]/95 px-3.5 py-2 text-xs text-red-200 shadow-lg"
+            className="pointer-events-auto flex w-full max-w-lg items-center justify-between gap-3 rounded-lg border border-red-500/40 bg-[#1a0d12]/95 px-3.5 py-2 text-xs text-red-200 shadow-lg"
           >
-            <span>{errorMessage}</span>
+            <span className="min-w-0 break-words">{errorMessage}</span>
             <button
               type="button"
               onClick={clearError}
@@ -145,9 +196,9 @@ export default function App() {
           <div
             role="status"
             data-testid="mic-permission-notice"
-            className="pointer-events-auto flex max-w-xl flex-wrap items-center justify-between gap-2.5 rounded-lg border border-amber-400/40 bg-[#18130c]/95 px-3.5 py-2 text-xs text-amber-100 shadow-lg"
+            className="pointer-events-auto flex w-full max-w-xl flex-wrap items-center justify-between gap-2.5 rounded-lg border border-amber-400/40 bg-[#18130c]/95 px-3.5 py-2 text-xs text-amber-100 shadow-lg"
           >
-            <span className="flex-1 min-w-[200px]">{micNotice}</span>
+            <span className="min-w-[180px] flex-1">{micNotice}</span>
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
@@ -208,12 +259,10 @@ export default function App() {
             <span>{latestTranscript.text}</span>
           </div>
         )}
-      </div>
 
-      {/* Bottom Voice-First Control Dock */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-3">
+        {/* Bottom Voice-First Control Dock */}
         <div
-          className={`pointer-events-auto flex flex-wrap items-center justify-center gap-2.5 rounded-2xl border px-3 py-2.5 shadow-2xl transition-colors duration-200 sm:flex-nowrap sm:gap-3 sm:px-4 ${
+          className={`pointer-events-auto flex flex-wrap items-center justify-center gap-2 rounded-2xl border px-3 py-2.5 shadow-2xl transition-colors duration-200 sm:flex-nowrap sm:gap-3 sm:px-4 ${
             isBadmash
               ? 'border-orange-500/45 bg-[#160e1c]/95 shadow-[0_0_28px_rgba(234,88,12,0.28)]'
               : 'border-sky-400/30 bg-[#0d111d]/95 shadow-[0_0_24px_rgba(14,165,233,0.18)]'

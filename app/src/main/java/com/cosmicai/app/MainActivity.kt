@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -15,10 +17,15 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 import com.cosmicai.bridge.CosmicNativeBridge
 import com.unity3d.ads.IUnityAdsInitializationListener
@@ -57,6 +64,11 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val assetLoader = WebViewAssetLoader.Builder()
@@ -105,7 +117,24 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        setContentView(webView)
+        val rootContainer = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#0D101B"))
+            addView(
+                webView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { view, windowInsets ->
+            val bars = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+        setContentView(rootContainer)
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
@@ -209,7 +238,13 @@ class MainActivity : AppCompatActivity() {
                 error: UnityAds.UnityAdsLoadError?,
                 message: String?
             ) {
-                readyPlacements[pid ?: placementId] = false
+                val targetPid = pid ?: placementId
+                readyPlacements[targetPid] = false
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!isDestroyed && UnityAds.isInitialized) {
+                        loadPlacement(targetPid)
+                    }
+                }, 5000)
             }
         })
     }
@@ -264,8 +299,12 @@ class MainActivity : AppCompatActivity() {
                         state: UnityAds.UnityAdsShowCompletionState?
                     ) {
                         loadPlacement(placementId)
-                        val completed = state == UnityAds.UnityAdsShowCompletionState.COMPLETED ||
-                            state == UnityAds.UnityAdsShowCompletionState.SKIPPED
+                        val completed = if (placementId == PLACEMENT_REWARDED) {
+                            state == UnityAds.UnityAdsShowCompletionState.COMPLETED
+                        } else {
+                            state == UnityAds.UnityAdsShowCompletionState.COMPLETED ||
+                                state == UnityAds.UnityAdsShowCompletionState.SKIPPED
+                        }
                         dispatchAdResult(callbackId, completed, placementId)
                     }
                 }
