@@ -204,6 +204,7 @@ async function startServer() {
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.json({
       ok: true,
       app: 'COSMIC AI',

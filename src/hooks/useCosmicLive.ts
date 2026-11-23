@@ -76,7 +76,7 @@ interface ServerWsMessage {
 
 const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
-  'https://ais-pre-ewacjsnpswr655db2sqdfo-986483805469.asia-southeast1.run.app';
+  'https://cosmic-ai-2.onrender.com';
 const BACKEND_STORAGE_KEY = 'cosmic_backend_url';
 
 function isPackagedApkOrigin(): boolean {
@@ -88,7 +88,9 @@ function getInitialBackendUrl(): string {
   if (typeof window === 'undefined') return '';
   try {
     const saved = window.localStorage.getItem(BACKEND_STORAGE_KEY)?.trim() || '';
-    if (saved && /^https?:\/\//i.test(saved)) return saved;
+    if (saved && /^https?:\/\//i.test(saved) && !/ais-pre-.*\.run\.app/i.test(saved)) {
+      return saved;
+    }
   } catch {
     // ignore storage errors
   }
@@ -802,7 +804,7 @@ export function useCosmicLive() {
         addLog('warn', 'gemini', `WebSocket transport error connecting to ${wsUrl}.`);
         setErrorMessage(
           isPackagedApkOrigin()
-            ? 'Live voice server is offline (404). Please publish/deploy the COSMIC AI app in AI Studio (Share App) and retry.'
+            ? 'Voice server is waking up or unreachable. Wait 20 seconds and tap Power On again.'
             : 'Voice transport error. Check server status and retry.',
         );
         setCosmicState('ERROR');
@@ -1102,6 +1104,15 @@ export function useCosmicLive() {
       navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
     };
   }, [addLog]);
+
+  // Pre-warm Render free-tier backend when packaged APK launches
+  useEffect(() => {
+    if (!isPackagedApkOrigin()) return;
+    const base = (backendUrl || DEFAULT_ANDROID_BACKEND_URL).replace(/\/+$/, '');
+    fetch(`${base}/api/health`).catch(() => {
+      // silent background wake-up only
+    });
+  }, [backendUrl]);
 
   // Cleanup on unmount
   useEffect(() => {
