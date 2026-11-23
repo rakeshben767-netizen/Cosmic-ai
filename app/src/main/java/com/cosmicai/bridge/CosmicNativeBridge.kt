@@ -187,12 +187,7 @@ class CosmicNativeBridge(
 
     @JavascriptInterface
     fun showInterstitialAd(callbackId: String?): String {
-        val safeId = (callbackId ?: "").trim()
-        if (safeId.isEmpty() || adRequester == null) {
-            return jsonResult(false, "Native Unity Interstitial unavailable.")
-        }
-        adRequester.invoke("BP_Interstitial_Android", safeId)
-        return jsonResult(true, "Triggered Unity Interstitial BP_Interstitial_Android.")
+        return showRewardedAd(callbackId)
     }
 
     @JavascriptInterface

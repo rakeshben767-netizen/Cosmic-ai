@@ -50,8 +50,7 @@ export function triggerUnityAd(
 
   const win = window as unknown as AndroidAdsWindow;
   const bridge = win.CosmicAndroidBridge;
-  const isInterstitial = placement === UNITY_ADS_CONFIG.interstitialPlacement;
-  const nativeInvoker = isInterstitial ? bridge?.showInterstitialAd : bridge?.showRewardedAd;
+  const nativeInvoker = bridge?.showRewardedAd;
 
   if (bridge && typeof nativeInvoker === 'function') {
     ensureNativeAdCallbackRegistered();

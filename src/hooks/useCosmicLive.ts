@@ -383,7 +383,7 @@ export function useCosmicLive() {
                 pendingPeriodicAdRef.current = false;
                 isAdShowingRef.current = true;
                 void triggerUnityAd(
-                  UNITY_ADS_CONFIG.interstitialPlacement,
+                  UNITY_ADS_CONFIG.rewardedPlacement,
                   'Sponsored Break (Every 4 Minutes)',
                   (req) => setActiveAd(req),
                 ).finally(() => {
@@ -663,7 +663,7 @@ export function useCosmicLive() {
             pendingPeriodicAdRef.current = false;
             isAdShowingRef.current = true;
             void triggerUnityAd(
-              UNITY_ADS_CONFIG.interstitialPlacement,
+              UNITY_ADS_CONFIG.rewardedPlacement,
               'Sponsored Break (Every 4 Minutes)',
               (req) => setActiveAd(req),
             ).finally(() => {
@@ -1010,7 +1010,7 @@ export function useCosmicLive() {
       pendingPeriodicAdRef.current = false;
       isAdShowingRef.current = true;
       void triggerUnityAd(
-        UNITY_ADS_CONFIG.interstitialPlacement,
+        UNITY_ADS_CONFIG.rewardedPlacement,
         'Sponsored Break (Every 4 Minutes)',
         (req) => setActiveAd(req),
       ).finally(() => {

@@ -40,7 +40,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val UNITY_GAME_ID = "800447797"
         private const val UNITY_TEST_MODE = false
-        private const val PLACEMENT_INTERSTITIAL = "BP_Interstitial_Android"
         private const val PLACEMENT_REWARDED = "BP_Rewarded_Android"
     }
 
@@ -111,8 +110,8 @@ class MainActivity : AppCompatActivity() {
                 loadWithOverviewMode = true
             }
             addJavascriptInterface(
-                CosmicNativeBridge(this@MainActivity) { placementId, callbackId ->
-                    showUnityAd(placementId, callbackId)
+                CosmicNativeBridge(this@MainActivity) { _, callbackId ->
+                    showUnityAd(callbackId)
                 },
                 "CosmicAndroidBridge"
             )
@@ -212,7 +211,6 @@ class MainActivity : AppCompatActivity() {
             UNITY_TEST_MODE,
             object : IUnityAdsInitializationListener {
                 override fun onInitializationComplete() {
-                    loadPlacement(PLACEMENT_INTERSTITIAL)
                     loadPlacement(PLACEMENT_REWARDED)
                 }
 
@@ -220,7 +218,6 @@ class MainActivity : AppCompatActivity() {
                     error: UnityAds.UnityAdsInitializationError?,
                     message: String?
                 ) {
-                    readyPlacements[PLACEMENT_INTERSTITIAL] = false
                     readyPlacements[PLACEMENT_REWARDED] = false
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (!isDestroyed && !UnityAds.isInitialized) {
@@ -268,23 +265,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showUnityAd(placementId: String, callbackId: String) {
+    private fun showUnityAd(callbackId: String) {
+        val targetPlacement = PLACEMENT_REWARDED
         runOnUiThread {
-            val isReady = readyPlacements[placementId] == true
+            val isReady = readyPlacements[targetPlacement] == true
             if (!UnityAds.isInitialized || !isReady) {
                 if (UnityAds.isInitialized) {
-                    loadPlacement(placementId)
+                    loadPlacement(targetPlacement)
                 } else {
                     initUnityAds()
                 }
-                dispatchAdResult(callbackId, false, placementId)
+                dispatchAdResult(callbackId, false, targetPlacement)
                 return@runOnUiThread
             }
 
-            readyPlacements[placementId] = false
+            readyPlacements[targetPlacement] = false
             UnityAds.show(
                 this@MainActivity,
-                placementId,
+                targetPlacement,
                 UnityAdsShowOptions(),
                 object : IUnityAdsShowListener {
                     override fun onUnityAdsShowFailure(
@@ -292,8 +290,8 @@ class MainActivity : AppCompatActivity() {
                         error: UnityAds.UnityAdsShowError?,
                         message: String?
                     ) {
-                        loadPlacement(placementId)
-                        dispatchAdResult(callbackId, false, placementId)
+                        loadPlacement(targetPlacement)
+                        dispatchAdResult(callbackId, false, targetPlacement)
                     }
 
                     override fun onUnityAdsShowStart(pid: String?) {}
@@ -304,14 +302,9 @@ class MainActivity : AppCompatActivity() {
                         pid: String?,
                         state: UnityAds.UnityAdsShowCompletionState?
                     ) {
-                        loadPlacement(placementId)
-                        val completed = if (placementId == PLACEMENT_REWARDED) {
-                            state == UnityAds.UnityAdsShowCompletionState.COMPLETED
-                        } else {
-                            state == UnityAds.UnityAdsShowCompletionState.COMPLETED ||
-                                state == UnityAds.UnityAdsShowCompletionState.SKIPPED
-                        }
-                        dispatchAdResult(callbackId, completed, placementId)
+                        loadPlacement(targetPlacement)
+                        val completed = state == UnityAds.UnityAdsShowCompletionState.COMPLETED
+                        dispatchAdResult(callbackId, completed, targetPlacement)
                     }
                 }
             )
