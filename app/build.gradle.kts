@@ -58,5 +58,8 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.webkit)
-    implementation(libs.unity.ads)
+    implementation(libs.levelplay.sdk)
+    implementation(libs.levelplay.unityads.adapter)
+    implementation(libs.play.services.ads.identifier)
+    implementation(libs.play.services.appset)
 }

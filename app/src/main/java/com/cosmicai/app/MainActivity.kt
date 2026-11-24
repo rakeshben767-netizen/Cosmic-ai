@@ -28,38 +28,47 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 import com.cosmicai.bridge.CosmicNativeBridge
-import com.unity3d.ads.IUnityAdsInitializationListener
-import com.unity3d.ads.IUnityAdsLoadListener
-import com.unity3d.ads.IUnityAdsShowListener
-import com.unity3d.ads.UnityAds
-import com.unity3d.ads.UnityAdsShowOptions
+import com.unity3d.mediation.LevelPlay
+import com.unity3d.mediation.LevelPlayAdError
+import com.unity3d.mediation.LevelPlayAdInfo
+import com.unity3d.mediation.LevelPlayConfiguration
+import com.unity3d.mediation.LevelPlayInitError
+import com.unity3d.mediation.LevelPlayInitListener
+import com.unity3d.mediation.LevelPlayInitRequest
+import com.unity3d.mediation.rewarded.LevelPlayReward
+import com.unity3d.mediation.rewarded.LevelPlayRewardedAd
+import com.unity3d.mediation.rewarded.LevelPlayRewardedAdListener
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        private const val UNITY_GAME_ID = "800426177"
-        private const val UNITY_TEST_MODE = false
-        private const val PLACEMENT_REWARDED_PRIMARY = "Rewarded_Android"
-        private val REWARDED_FALLBACK_PLACEMENTS = listOf(
-            "rewardedVideo",
-            "Rewarded_Androidd"
+        private const val LEVELPLAY_APP_KEY = "29d45e7d5"
+        private const val AD_UNIT_REWARDED_PRIMARY = "Rewarded_Androidd"
+        private const val AD_UNIT_REWARDED_FALLBACK = "Rewarded_Android"
+        private val REWARDED_AD_UNITS = listOf(
+            AD_UNIT_REWARDED_PRIMARY,
+            AD_UNIT_REWARDED_FALLBACK
         )
-        private val ALL_REWARDED_PLACEMENTS = listOf(PLACEMENT_REWARDED_PRIMARY) + REWARDED_FALLBACK_PLACEMENTS
     }
 
     private lateinit var webView: WebView
     private var pendingWebPermissionRequest: PermissionRequest? = null
-    private val readyPlacements = ConcurrentHashMap<String, Boolean>()
-    private val loadingPlacements = ConcurrentHashMap<String, Boolean>()
-    private val placementErrors = ConcurrentHashMap<String, String>()
-    private val disabledPlacements = ConcurrentHashMap<String, Boolean>()
+    private val rewardedAds = ConcurrentHashMap<String, LevelPlayRewardedAd>()
+    private val loadingUnits = ConcurrentHashMap<String, Boolean>()
+    private val unitErrors = ConcurrentHashMap<String, String>()
     private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var isLevelPlayInitialized = false
+    @Volatile
+    private var isLevelPlayInitializing = false
     @Volatile
     private var lastAdErrorReason: String = ""
     private var pendingShowCallbackId: String? = null
     private var pendingShowTimeoutRunnable: Runnable? = null
+    private var activeShowCallbackId: String? = null
+    private var activeRewardEarned = false
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -218,140 +227,159 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://appassets.androidplatform.net/index.html")
     }
 
-    private fun findReadyRewardedPlacement(): String? {
-        return ALL_REWARDED_PLACEMENTS.firstOrNull { readyPlacements[it] == true }
+    private fun findReadyRewardedUnit(): String? {
+        return REWARDED_AD_UNITS.firstOrNull { rewardedAds[it]?.isAdReady() == true }
     }
 
     private fun initUnityAds() {
-        if (UnityAds.isInitialized) {
-            loadRewardedPlacements()
+        if (isLevelPlayInitialized) {
+            loadRewardedAds()
             return
         }
-        UnityAds.initialize(
-            applicationContext,
-            UNITY_GAME_ID,
-            UNITY_TEST_MODE,
-            object : IUnityAdsInitializationListener {
-                override fun onInitializationComplete() {
-                    runOnUiThread {
-                        lastAdErrorReason = ""
-                        placementErrors.clear()
-                        disabledPlacements.clear()
-                        loadRewardedPlacements()
-                    }
-                }
+        if (isLevelPlayInitializing) return
+        isLevelPlayInitializing = true
+        LevelPlay.setAdaptersDebug(false)
 
-                override fun onInitializationFailed(
-                    error: UnityAds.UnityAdsInitializationError?,
-                    message: String?
-                ) {
-                    val reason = "Unity init failed (${error?.name ?: "UNKNOWN"}): ${message ?: "check network/Game ID"}"
-                    runOnUiThread {
-                        for (pid in ALL_REWARDED_PLACEMENTS) {
-                            readyPlacements[pid] = false
-                            loadingPlacements[pid] = false
-                        }
-                        lastAdErrorReason = reason
-                        resolvePendingShowFailure(reason)
-                        mainHandler.postDelayed({
-                            if (!isDestroyed && !UnityAds.isInitialized) {
-                                initUnityAds()
-                            }
-                        }, 10000)
-                    }
-                }
-            }
-        )
-    }
-
-    private fun loadRewardedPlacements() {
-        val activeFallback = REWARDED_FALLBACK_PLACEMENTS.firstOrNull { disabledPlacements[it] != true }
-        val candidate = if (disabledPlacements[PLACEMENT_REWARDED_PRIMARY] != true) {
-            PLACEMENT_REWARDED_PRIMARY
-        } else {
-            activeFallback ?: PLACEMENT_REWARDED_PRIMARY
-        }
-        loadPlacement(candidate)
-    }
-
-    private fun loadPlacement(placementId: String) {
-        if (!UnityAds.isInitialized) return
-        if (readyPlacements[placementId] == true || loadingPlacements[placementId] == true) return
-        loadingPlacements[placementId] = true
-        readyPlacements[placementId] = false
-        UnityAds.load(placementId, object : IUnityAdsLoadListener {
-            override fun onUnityAdsAdLoaded(pid: String?) {
-                val targetPid = pid ?: placementId
+        val initRequest = LevelPlayInitRequest.Builder(LEVELPLAY_APP_KEY).build()
+        LevelPlay.init(applicationContext, initRequest, object : LevelPlayInitListener {
+            override fun onInitSuccess(configuration: LevelPlayConfiguration) {
                 runOnUiThread {
-                    loadingPlacements[targetPid] = false
-                    readyPlacements[targetPid] = true
-                    disabledPlacements.remove(targetPid)
-                    placementErrors.remove(targetPid)
+                    isLevelPlayInitializing = false
+                    isLevelPlayInitialized = true
                     lastAdErrorReason = ""
-                    val pendingCb = pendingShowCallbackId
-                    if (pendingCb != null) {
-                        pendingShowCallbackId = null
-                        pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
-                        pendingShowTimeoutRunnable = null
-                        showReadyAd(targetPid, pendingCb)
-                    }
+                    unitErrors.clear()
+                    loadRewardedAds()
                 }
             }
 
-            override fun onUnityAdsFailedToLoad(
-                pid: String?,
-                error: UnityAds.UnityAdsLoadError?,
-                message: String?
-            ) {
-                val targetPid = pid ?: placementId
-                val rawMsg = message ?: "no ad available right now"
-                val notConfigured = rawMsg.contains("No placement configured", ignoreCase = true)
-                val reason = when {
-                    rawMsg.contains("adMarkup", ignoreCase = true) ||
-                        rawMsg.contains("objectId", ignoreCase = true) ->
-                        "Unity project $UNITY_GAME_ID [$targetPid] is Bidding/Mediation. In Unity Dashboard select 'Only Unity Ads (No Mediation)' or send AdMob Rewarded ID."
-                    notConfigured ->
-                        "Unity placement '$targetPid' is not configured on Game ID $UNITY_GAME_ID."
-                    else ->
-                        "Unity ad failed [$targetPid] (${error?.name ?: "NO_FILL"}): $rawMsg"
-                }
-
+            override fun onInitFailed(error: LevelPlayInitError) {
+                val reason = "LevelPlay init failed (${error.errorCode}): ${error.errorMessage}"
                 runOnUiThread {
-                    loadingPlacements[targetPid] = false
-                    readyPlacements[targetPid] = false
-                    placementErrors[targetPid] = reason
-                    if (notConfigured) {
-                        disabledPlacements[targetPid] = true
-                        val nextFallback = ALL_REWARDED_PLACEMENTS.firstOrNull {
-                            it != targetPid && disabledPlacements[it] != true
-                        }
-                        if (nextFallback != null) {
-                            loadPlacement(nextFallback)
-                            return@runOnUiThread
-                        }
-                    }
-
-                    val primaryReason = placementErrors[PLACEMENT_REWARDED_PRIMARY] ?: reason
-                    if (findReadyRewardedPlacement() == null) {
-                        lastAdErrorReason = primaryReason
-                    }
-                    val anyOtherLoadingOrReady = ALL_REWARDED_PLACEMENTS.any {
-                        readyPlacements[it] == true || loadingPlacements[it] == true
-                    }
-                    if (!anyOtherLoadingOrReady) {
-                        resolvePendingShowFailure(lastAdErrorReason.ifEmpty { primaryReason })
-                    }
+                    isLevelPlayInitializing = false
+                    isLevelPlayInitialized = false
+                    lastAdErrorReason = reason
+                    resolvePendingShowFailure(reason)
                     mainHandler.postDelayed({
-                        if (!isDestroyed && UnityAds.isInitialized) {
-                            if (notConfigured) {
-                                disabledPlacements.clear()
-                            }
-                            loadRewardedPlacements()
+                        if (!isDestroyed && !isLevelPlayInitialized) {
+                            initUnityAds()
                         }
-                    }, 15000)
+                    }, 10000)
                 }
             }
         })
+    }
+
+    private fun loadRewardedAds() {
+        if (!isLevelPlayInitialized) return
+        for (adUnitId in REWARDED_AD_UNITS) {
+            loadAdUnit(adUnitId)
+        }
+    }
+
+    private fun loadAdUnit(adUnitId: String) {
+        if (!isLevelPlayInitialized) return
+        val existing = rewardedAds[adUnitId]
+        if (existing != null && existing.isAdReady()) return
+        if (loadingUnits[adUnitId] == true) return
+        loadingUnits[adUnitId] = true
+
+        val rewardedAd = existing ?: LevelPlayRewardedAd(adUnitId).also { ad ->
+            ad.setListener(object : LevelPlayRewardedAdListener {
+                override fun onAdLoaded(adInfo: LevelPlayAdInfo) {
+                    runOnUiThread {
+                        loadingUnits[adUnitId] = false
+                        unitErrors.remove(adUnitId)
+                        lastAdErrorReason = ""
+                        val pendingCb = pendingShowCallbackId
+                        if (pendingCb != null) {
+                            pendingShowCallbackId = null
+                            pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+                            pendingShowTimeoutRunnable = null
+                            showReadyAd(adUnitId, pendingCb)
+                        }
+                    }
+                }
+
+                override fun onAdLoadFailed(error: LevelPlayAdError) {
+                    val reason = "LevelPlay ad failed [$adUnitId] (${error.errorCode}): ${error.errorMessage}"
+                    runOnUiThread {
+                        loadingUnits[adUnitId] = false
+                        unitErrors[adUnitId] = reason
+                        val primaryReason = unitErrors[AD_UNIT_REWARDED_PRIMARY] ?: reason
+                        if (findReadyRewardedUnit() == null) {
+                            lastAdErrorReason = primaryReason
+                        }
+                        val anyBusyOrReady = REWARDED_AD_UNITS.any {
+                            rewardedAds[it]?.isAdReady() == true || loadingUnits[it] == true
+                        }
+                        if (!anyBusyOrReady) {
+                            resolvePendingShowFailure(lastAdErrorReason.ifEmpty { primaryReason })
+                        }
+                        mainHandler.postDelayed({
+                            if (!isDestroyed && isLevelPlayInitialized) {
+                                loadAdUnit(adUnitId)
+                            }
+                        }, 15000)
+                    }
+                }
+
+                override fun onAdDisplayed(adInfo: LevelPlayAdInfo) {}
+
+                override fun onAdRewarded(reward: LevelPlayReward, adInfo: LevelPlayAdInfo) {
+                    runOnUiThread {
+                        activeRewardEarned = true
+                    }
+                }
+
+                override fun onAdDisplayFailed(error: LevelPlayAdError, adInfo: LevelPlayAdInfo) {
+                    val reason = "LevelPlay show failed (${error.errorCode}): ${error.errorMessage}"
+                    runOnUiThread {
+                        lastAdErrorReason = reason
+                        val cb = activeShowCallbackId
+                        activeShowCallbackId = null
+                        activeRewardEarned = false
+                        loadAdUnit(adUnitId)
+                        if (cb != null) {
+                            dispatchAdResult(cb, false, adUnitId, reason)
+                        }
+                    }
+                }
+
+                override fun onAdClicked(adInfo: LevelPlayAdInfo) {}
+
+                override fun onAdClosed(adInfo: LevelPlayAdInfo) {
+                    runOnUiThread {
+                        val cb = activeShowCallbackId
+                        if (cb == null) {
+                            loadAdUnit(adUnitId)
+                            return@runOnUiThread
+                        }
+                        if (activeRewardEarned) {
+                            activeShowCallbackId = null
+                            activeRewardEarned = false
+                            loadAdUnit(adUnitId)
+                            dispatchAdResult(cb, true, adUnitId, "")
+                        } else {
+                            mainHandler.postDelayed({
+                                if (activeShowCallbackId == cb) {
+                                    val earned = activeRewardEarned
+                                    activeShowCallbackId = null
+                                    activeRewardEarned = false
+                                    loadAdUnit(adUnitId)
+                                    val reason = if (earned) "" else "Rewarded ad was closed before earning reward."
+                                    dispatchAdResult(cb, earned, adUnitId, reason)
+                                }
+                            }, 250)
+                        }
+                    }
+                }
+
+                override fun onAdInfoChanged(adInfo: LevelPlayAdInfo) {}
+            })
+            rewardedAds[adUnitId] = ad
+        }
+
+        rewardedAd.loadAd()
     }
 
     private fun resolvePendingShowFailure(reason: String) {
@@ -359,7 +387,7 @@ class MainActivity : AppCompatActivity() {
         pendingShowCallbackId = null
         pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         pendingShowTimeoutRunnable = null
-        dispatchAdResult(pendingCb, false, PLACEMENT_REWARDED_PRIMARY, reason)
+        dispatchAdResult(pendingCb, false, AD_UNIT_REWARDED_PRIMARY, reason)
     }
 
     private fun dispatchAdResult(
@@ -383,19 +411,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun showUnityAd(callbackId: String) {
         runOnUiThread {
-            val readyPid = findReadyRewardedPlacement()
-            if (readyPid != null) {
+            val readyUnit = findReadyRewardedUnit()
+            if (readyUnit != null) {
                 pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
                 pendingShowTimeoutRunnable = null
                 pendingShowCallbackId = null
-                showReadyAd(readyPid, callbackId)
+                showReadyAd(readyUnit, callbackId)
                 return@runOnUiThread
             }
 
             pendingShowTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
             val previousCb = pendingShowCallbackId
             if (previousCb != null && previousCb != callbackId) {
-                dispatchAdResult(previousCb, false, PLACEMENT_REWARDED_PRIMARY, "Superseded by newer ad request.")
+                dispatchAdResult(previousCb, false, AD_UNIT_REWARDED_PRIMARY, "Superseded by newer ad request.")
             }
 
             pendingShowCallbackId = callbackId
@@ -408,53 +436,30 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         "Rewarded ad is still loading. Try again in a few seconds."
                     }
-                    dispatchAdResult(callbackId, false, PLACEMENT_REWARDED_PRIMARY, reason)
+                    dispatchAdResult(callbackId, false, AD_UNIT_REWARDED_PRIMARY, reason)
                 }
             }
             pendingShowTimeoutRunnable = timeoutRunnable
-            mainHandler.postDelayed(timeoutRunnable, 8000)
+            mainHandler.postDelayed(timeoutRunnable, 10000)
 
-            if (!UnityAds.isInitialized) {
+            if (!isLevelPlayInitialized) {
                 initUnityAds()
             } else {
-                loadRewardedPlacements()
+                loadRewardedAds()
             }
         }
     }
 
-    private fun showReadyAd(targetPlacement: String, callbackId: String) {
-        readyPlacements[targetPlacement] = false
-        UnityAds.show(
-            this@MainActivity,
-            targetPlacement,
-            UnityAdsShowOptions(),
-            object : IUnityAdsShowListener {
-                override fun onUnityAdsShowFailure(
-                    pid: String?,
-                    error: UnityAds.UnityAdsShowError?,
-                    message: String?
-                ) {
-                    val reason = "Unity show failed (${error?.name ?: "UNKNOWN"}): ${message ?: "display error"}"
-                    lastAdErrorReason = reason
-                    loadPlacement(targetPlacement)
-                    dispatchAdResult(callbackId, false, targetPlacement, reason)
-                }
-
-                override fun onUnityAdsShowStart(pid: String?) {}
-
-                override fun onUnityAdsShowClick(pid: String?) {}
-
-                override fun onUnityAdsShowComplete(
-                    pid: String?,
-                    state: UnityAds.UnityAdsShowCompletionState?
-                ) {
-                    loadPlacement(targetPlacement)
-                    val completed = state == UnityAds.UnityAdsShowCompletionState.COMPLETED
-                    val reason = if (completed) "" else "Rewarded ad was skipped before finishing."
-                    dispatchAdResult(callbackId, completed, targetPlacement, reason)
-                }
-            }
-        )
+    private fun showReadyAd(adUnitId: String, callbackId: String) {
+        val ad = rewardedAds[adUnitId]
+        if (ad == null || !ad.isAdReady()) {
+            loadAdUnit(adUnitId)
+            dispatchAdResult(callbackId, false, adUnitId, "Rewarded ad not ready.")
+            return
+        }
+        activeShowCallbackId = callbackId
+        activeRewardEarned = false
+        ad.showAd(this@MainActivity)
     }
 
     private fun hasRecordAudio(): Boolean {

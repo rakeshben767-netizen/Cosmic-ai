@@ -1,7 +1,8 @@
 export const UNITY_ADS_CONFIG = {
+  appKey: '29d45e7d5',
   gameId: '800426177',
   organizationCoreId: '13470006284888',
-  rewardedPlacement: 'Rewarded_Android',
+  rewardedPlacement: 'Rewarded_Androidd',
 } as const;
 
 export type UnityAdPlacement = typeof UNITY_ADS_CONFIG.rewardedPlacement;
