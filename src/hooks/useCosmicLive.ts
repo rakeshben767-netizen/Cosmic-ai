@@ -20,22 +20,6 @@ import {
 } from '../utils/pcmAudio.ts';
 import { executeSafeToolCall } from '../utils/safeActions.ts';
 import { detectBridgeEnvironment, getCosmicNativeBridge } from '../utils/androidBridge.ts';
-import {
-  getLastUnityAdError,
-  triggerUnityAd,
-  UNITY_ADS_CONFIG,
-  type WebAdPromptRequest,
-} from '../utils/unityAds.ts';
-import {
-  getAdPassStatus,
-  loadAdPassState,
-  normalizeAdPassState,
-  PERIODIC_AD_INTERVAL_MS,
-  recordWatchedPassAd,
-  saveAdPassState,
-  type AdPassStatus,
-  type AdPassStorageState,
-} from '../utils/adPass.ts';
 
 const WORKLET_PROCESSOR_CODE = `
 class CosmicMicProcessor extends AudioWorkletProcessor {
@@ -128,7 +112,6 @@ export function useCosmicLive() {
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
   const [speakerTestResult, setSpeakerTestResult] = useState<string | null>(null);
-  const [activeAd, setActiveAd] = useState<WebAdPromptRequest | null>(null);
   const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
     contextState: 'uninitialized',
     sampleRate: 0,
@@ -159,20 +142,12 @@ export function useCosmicLive() {
   const micProcessorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const micSilenceGainRef = useRef<GainNode | null>(null);
 
-  // Playback queue & Ad scheduling
+  // Playback queue & Bridge runtime
   const nextStartTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
   const meterTimerRef = useRef<number | null>(null);
   const bridgeEnv = useRef(detectBridgeEnvironment());
-  const isAdShowingRef = useRef<boolean>(false);
-  const aiTurnInFlightRef = useRef<boolean>(false);
-  const pendingPeriodicAdRef = useRef<boolean>(false);
-  const lastPeriodicAdAtRef = useRef<number>(Date.now());
-  const adPassStorageRef = useRef<AdPassStorageState>(loadAdPassState());
-  const [adPassStatus, setAdPassStatus] = useState<AdPassStatus>(() =>
-    getAdPassStatus(adPassStorageRef.current),
-  );
 
   useEffect(() => {
     modeRef.current = mode;
@@ -372,27 +347,6 @@ export function useCosmicLive() {
           }));
           if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
             setCosmicState(wsRef.current?.readyState === WebSocket.OPEN ? 'LISTENING' : 'IDLE');
-            if (pendingPeriodicAdRef.current && !aiTurnInFlightRef.current && !isAdShowingRef.current) {
-              const nowMs = Date.now();
-              const normalized = normalizeAdPassState(adPassStorageRef.current, nowMs);
-              adPassStorageRef.current = normalized;
-              saveAdPassState(normalized);
-              setAdPassStatus(getAdPassStatus(normalized, nowMs));
-              if (normalized.adFreeUntil > nowMs) {
-                pendingPeriodicAdRef.current = false;
-              } else {
-                pendingPeriodicAdRef.current = false;
-                isAdShowingRef.current = true;
-                void triggerUnityAd(
-                  UNITY_ADS_CONFIG.rewardedPlacement,
-                  'Sponsored Break (Every 4 Minutes)',
-                  (req) => setActiveAd(req),
-                ).finally(() => {
-                  lastPeriodicAdAtRef.current = Date.now();
-                  isAdShowingRef.current = false;
-                });
-              }
-            }
           }
         };
 
@@ -630,13 +584,11 @@ export function useCosmicLive() {
       }
 
       if (msg.type === 'audio' && msg.data) {
-        aiTurnInFlightRef.current = true;
         await playPcmChunk(msg.data, msg.mimeType || 'audio/pcm;rate=24000');
         return;
       }
 
       if (msg.type === 'interrupted') {
-        aiTurnInFlightRef.current = false;
         clearAudioQueue('user-interrupted');
         setCosmicState('LISTENING');
         addLog('info', 'playback', 'Gemini Live turn interrupted by user speech.');
@@ -644,40 +596,13 @@ export function useCosmicLive() {
       }
 
       if (msg.type === 'turn_complete') {
-        aiTurnInFlightRef.current = false;
         if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
           setCosmicState('LISTENING');
-        }
-        if (
-          pendingPeriodicAdRef.current &&
-          activeSourcesRef.current.size === 0 &&
-          !isAdShowingRef.current
-        ) {
-          const nowMs = Date.now();
-          const normalized = normalizeAdPassState(adPassStorageRef.current, nowMs);
-          adPassStorageRef.current = normalized;
-          saveAdPassState(normalized);
-          setAdPassStatus(getAdPassStatus(normalized, nowMs));
-          if (normalized.adFreeUntil > nowMs) {
-            pendingPeriodicAdRef.current = false;
-          } else {
-            pendingPeriodicAdRef.current = false;
-            isAdShowingRef.current = true;
-            void triggerUnityAd(
-              UNITY_ADS_CONFIG.rewardedPlacement,
-              'Sponsored Break (Every 4 Minutes)',
-              (req) => setActiveAd(req),
-            ).finally(() => {
-              lastPeriodicAdAtRef.current = Date.now();
-              isAdShowingRef.current = false;
-            });
-          }
         }
         return;
       }
 
       if (msg.type === 'input_transcript' && msg.text) {
-        aiTurnInFlightRef.current = true;
         appendTranscript('user', msg.text);
         return;
       }
@@ -868,7 +793,6 @@ export function useCosmicLive() {
       }
       clearAudioQueue('user-text-interrupt');
       appendTranscript('user', trimmed);
-      aiTurnInFlightRef.current = true;
       ws.send(JSON.stringify({ type: 'text', text: trimmed }));
     },
     [appendTranscript, clearAudioQueue, ensureAudioContext],
@@ -898,33 +822,8 @@ export function useCosmicLive() {
     });
   }, [addLog, connect, retryMicrophone]);
 
-  const toggleBadmashMode = useCallback(async () => {
-    if (isAdShowingRef.current) return;
+  const toggleBadmashMode = useCallback(() => {
     const next: CosmicMode = modeRef.current === 'normal' ? 'badmash' : 'normal';
-
-    if (next === 'badmash') {
-      isAdShowingRef.current = true;
-      let rewarded = false;
-      try {
-        rewarded = await triggerUnityAd(
-          UNITY_ADS_CONFIG.rewardedPlacement,
-          'Watch Rewarded Ad to Unlock Badmash Mode',
-          (req) => setActiveAd(req),
-        );
-      } finally {
-        isAdShowingRef.current = false;
-      }
-
-      if (!rewarded) {
-        const nativeReason = getLastUnityAdError();
-        setErrorMessage(
-          nativeReason ||
-            'Rewarded ad must be watched completely (or is still loading) to unlock Badmash Mode.',
-        );
-        return;
-      }
-    }
-
     setMode(next);
     addLog(
       'info',
@@ -943,90 +842,6 @@ export function useCosmicLive() {
       );
     }
   }, [addLog, clearAudioQueue]);
-
-  const watchPassRewardAd = useCallback(async (): Promise<boolean> => {
-    if (isAdShowingRef.current) return false;
-    isAdShowingRef.current = true;
-    let rewarded = false;
-    try {
-      rewarded = await triggerUnityAd(
-        UNITY_ADS_CONFIG.rewardedPlacement,
-        `12-Hour Ad-Free Pass (${adPassStorageRef.current.watchedCount + 1}/20)`,
-        (req) => setActiveAd(req),
-      );
-    } finally {
-      isAdShowingRef.current = false;
-    }
-
-    if (!rewarded) {
-      const nativeReason = getLastUnityAdError();
-      setErrorMessage(
-        nativeReason || 'Rewarded ad was not completed or is still loading. Try again shortly.',
-      );
-      return false;
-    }
-
-    const now = Date.now();
-    const updated = recordWatchedPassAd(adPassStorageRef.current, now);
-    adPassStorageRef.current = updated;
-    saveAdPassState(updated);
-    setAdPassStatus(getAdPassStatus(updated, now));
-    pendingPeriodicAdRef.current = false;
-    return true;
-  }, []);
-
-  // Periodic 4-minute ad scheduler (suppressed during 12h pass, never interrupts active AI answer)
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      const now = Date.now();
-      const normalized = normalizeAdPassState(adPassStorageRef.current, now);
-      if (
-        normalized.watchedCount !== adPassStorageRef.current.watchedCount ||
-        normalized.adFreeUntil !== adPassStorageRef.current.adFreeUntil
-      ) {
-        adPassStorageRef.current = normalized;
-        saveAdPassState(normalized);
-        lastPeriodicAdAtRef.current = now;
-      }
-      setAdPassStatus(getAdPassStatus(normalized, now));
-
-      if (normalized.adFreeUntil > now) {
-        pendingPeriodicAdRef.current = false;
-        return;
-      }
-
-      if (now - lastPeriodicAdAtRef.current < PERIODIC_AD_INTERVAL_MS) {
-        return;
-      }
-
-      const isAiBusy =
-        aiTurnInFlightRef.current ||
-        stateRef.current === 'SPEAKING' ||
-        activeSourcesRef.current.size > 0;
-
-      if (isAiBusy) {
-        pendingPeriodicAdRef.current = true;
-        return;
-      }
-
-      if (isAdShowingRef.current) {
-        return;
-      }
-
-      pendingPeriodicAdRef.current = false;
-      isAdShowingRef.current = true;
-      void triggerUnityAd(
-        UNITY_ADS_CONFIG.rewardedPlacement,
-        'Sponsored Break (Every 4 Minutes)',
-        (req) => setActiveAd(req),
-      ).finally(() => {
-        lastPeriodicAdAtRef.current = Date.now();
-        isAdShowingRef.current = false;
-      });
-    }, 5000);
-
-    return () => window.clearInterval(timer);
-  }, []);
 
   const testSpeaker = useCallback(async () => {
     try {
@@ -1166,15 +981,6 @@ export function useCosmicLive() {
     [addLog],
   );
 
-  const completeWebAd = useCallback((completed: boolean) => {
-    setActiveAd((current) => {
-      if (current) {
-        current.resolve(completed);
-      }
-      return null;
-    });
-  }, []);
-
   return {
     mode,
     cosmicState,
@@ -1187,10 +993,6 @@ export function useCosmicLive() {
     diagnosticLogs,
     diagnostics,
     speakerTestResult,
-    activeAd,
-    completeWebAd,
-    adPassStatus,
-    watchPassRewardAd,
     bridgeRuntime: bridgeEnv.current,
     audioLevelRef,
     togglePower,

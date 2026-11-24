@@ -4,18 +4,12 @@ coreKtx = "1.15.0"
 appcompat = "1.7.0"
 activityKtx = "1.9.3"
 webkit = "1.12.1"
-unityAds = "4.22.0"
-playServicesAdsId = "18.3.0"
-playServicesAppSet = "16.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activityKtx" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
-unity-ads = { group = "com.unity3d.ads", name = "unity-ads", version.ref = "unityAds" }
-play-services-ads-identifier = { group = "com.google.android.gms", name = "play-services-ads-identifier", version.ref = "playServicesAdsId" }
-play-services-appset = { group = "com.google.android.gms", name = "play-services-appset", version.ref = "playServicesAppSet" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

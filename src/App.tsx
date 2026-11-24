@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   Flame,
-  Gift,
   Mic,
   MicOff,
   Power,
@@ -10,10 +9,8 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { AdFreePassModal } from './components/AdFreePassModal.tsx';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
-import { UnityAdOverlay } from './components/UnityAdOverlay.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
 
@@ -26,10 +23,6 @@ export default function App() {
     micNotice,
     transcripts,
     diagnostics,
-    activeAd,
-    completeWebAd,
-    adPassStatus,
-    watchPassRewardAd,
     audioLevelRef,
     togglePower,
     toggleMicMute,
@@ -42,7 +35,6 @@ export default function App() {
 
   const [cameraResetTick, setCameraResetTick] = useState(0);
   const [fallbackDraft, setFallbackDraft] = useState('');
-  const [adPassModalOpen, setAdPassModalOpen] = useState(false);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
 
   const isBadmash = mode === 'badmash';
@@ -113,27 +105,7 @@ export default function App() {
         </div>
 
         <div className="pointer-events-auto flex items-center gap-1.5 shrink-0 sm:gap-2">
-          {/* Watch 20 Ads -> 12 Hours Ad-Free Pass */}
-          <button
-            type="button"
-            onClick={() => setAdPassModalOpen(true)}
-            data-testid="ad-free-pass-button"
-            aria-label="Open 12-hour ad-free pass"
-            className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold whitespace-nowrap transition-colors sm:h-10 sm:px-3 sm:text-xs ${
-              adPassStatus.isAdFreeActive
-                ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30'
-                : 'border-amber-400/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
-            }`}
-          >
-            <Gift className="h-3.5 w-3.5 shrink-0" />
-            <span>
-              {adPassStatus.isAdFreeActive
-                ? `Free ${adPassStatus.remainingLabel}`
-                : `Ad-Free ${adPassStatus.watchedCount}/${adPassStatus.targetCount}`}
-            </span>
-          </button>
-
-          {/* Privacy Policy (Google Play Requirement) */}
+          {/* Privacy Policy */}
           <button
             type="button"
             onClick={() => setPrivacyModalOpen(true)}
@@ -157,20 +129,6 @@ export default function App() {
           </button>
         </div>
       </header>
-
-      <UnityAdOverlay
-        placement={activeAd?.placement ?? null}
-        reason={activeAd?.reason ?? ''}
-        onComplete={completeWebAd}
-      />
-
-      <AdFreePassModal
-        open={adPassModalOpen}
-        adPass={adPassStatus}
-        onClose={() => setAdPassModalOpen(false)}
-        onWatchAd={watchPassRewardAd}
-        onOpenPrivacy={() => setPrivacyModalOpen(true)}
-      />
 
       <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
 
@@ -326,7 +284,7 @@ export default function App() {
             role="switch"
             aria-checked={isBadmash}
             aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
-            onClick={() => void toggleBadmashMode()}
+            onClick={() => toggleBadmashMode()}
             data-testid="badmash-mode-toggle"
             className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold tracking-wide whitespace-nowrap transition-all duration-200 focus-visible:outline-2 focus-visible:outline-orange-400 ${
               isBadmash

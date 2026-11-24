@@ -23,7 +23,7 @@ export function PrivacyPolicyModal({ open, onClose }: PrivacyPolicyModalProps) {
             <div>
               <h2 className="font-display text-base font-bold text-white">Privacy Policy</h2>
               <p className="font-mono text-[11px] text-slate-400">
-                com.cosmicai.app · Effective Nov 23, 2026
+                com.cosmicai.app · Effective Nov 24, 2026
               </p>
             </div>
           </div>
@@ -38,56 +38,30 @@ export function PrivacyPolicyModal({ open, onClose }: PrivacyPolicyModalProps) {
         </div>
 
         <div className="cosmic-scroll space-y-4 overflow-y-auto px-5 py-4 text-xs leading-relaxed text-slate-300">
-          <p>
-            COSMIC AI is a real-time 3D voice-to-voice AI companion with Normal and Badmash comedy
-            modes. This policy explains what data and permissions the app uses for Google Play Store
-            transparency.
-          </p>
-
           <section>
-            <h3 className="mb-1 font-semibold text-sky-300">1. Microphone Audio (RECORD_AUDIO)</h3>
+            <h3 className="mb-1 font-semibold text-sky-300">1. Entertainment Purpose Only</h3>
             <p>
-              Microphone access is activated only while live voice mode is powered on and unmuted.
-              Spoken audio is streamed over encrypted HTTPS/WSS to generate real-time AI voice
-              responses and is never sold to advertisers.
+              COSMIC AI is created solely for entertainment purposes as a fun, interactive 3D AI
+              voice companion. All voice replies, jokes, and Badmash comedy banter are generated for
+              lighthearted amusement only and should not be taken seriously or treated as real-life,
+              professional, medical, or legal advice. The app runs completely ad-free.
             </p>
           </section>
 
           <section>
-            <h3 className="mb-1 font-semibold text-sky-300">
-              2. Contacts &amp; Phone (READ_CONTACTS, CALL_PHONE)
-            </h3>
+            <h3 className="mb-1 font-semibold text-sky-300">2. Age Requirement</h3>
             <p>
-              Optional permissions used solely on-device when you explicitly tell COSMIC AI to dial
-              a contact. Your contacts are never uploaded to third-party marketing or ad servers.
+              COSMIC AI is intended for users aged 13 years and older. It is not directed toward
+              children under 13, and Badmash Comedy Mode is best suited for mature teens and adults
+              (18+ recommended for roast humor).
             </p>
           </section>
 
           <section>
-            <h3 className="mb-1 font-semibold text-sky-300">3. Third-Party Advertising</h3>
+            <h3 className="mb-1 font-semibold text-sky-300">3. Contact (Gmail)</h3>
             <p>
-              COSMIC AI displays ads from third-party advertising partners for 4-minute periodic
-              breaks and optional Rewarded Ads (unlocking Badmash Mode or earning a 12-hour
-              periodic-ad-free pass). Advertising partners may process device advertising IDs, IP
-              addresses, diagnostics, and ad engagement metrics in accordance with their own
-              privacy policies.
-            </p>
-          </section>
-
-          <section>
-            <h3 className="mb-1 font-semibold text-sky-300">4. Local Storage &amp; Controls</h3>
-            <p>
-              Your 20-ad 12-hour Ad-Free Pass progress and app preferences stay locally in device
-              storage. You may revoke permissions anytime via Android Settings. Not intended for
-              children under 13.
-            </p>
-          </section>
-
-          <section>
-            <h3 className="mb-1 font-semibold text-sky-300">5. Developer Contact</h3>
-            <p>
-              Email <span className="font-mono text-white">watchrewards99@gmail.com</span> for data
-              safety or privacy inquiries.
+              For any questions, feedback, or support, contact us at{' '}
+              <span className="font-mono text-white">watchrewards99@gmail.com</span>.
             </p>
           </section>
         </div>

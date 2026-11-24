@@ -21,8 +21,7 @@ import org.json.JSONObject
  *   5. callContact(contactName)
  */
 class CosmicNativeBridge(
-    private val context: Context,
-    private val adRequester: ((placementId: String, callbackId: String) -> Unit)? = null
+    private val context: Context
 ) {
 
     private val allowlistedPackages = mapOf(
@@ -183,30 +182,5 @@ class CosmicNativeBridge(
                 matches.take(5)
             )
         }
-    }
-
-    @JavascriptInterface
-    fun showInterstitialAd(callbackId: String?): String {
-        return showRewardedAd(callbackId)
-    }
-
-    @JavascriptInterface
-    fun showRewardedAd(callbackId: String?): String {
-        val safeId = (callbackId ?: "").trim()
-        if (safeId.isEmpty() || adRequester == null) {
-            return jsonResult(false, "Native Unity Rewarded Ad unavailable.")
-        }
-        adRequester.invoke("Rewarded_Android", safeId)
-        return jsonResult(true, "Triggered Unity Rewarded Ad.")
-    }
-
-    @JavascriptInterface
-    fun getUnityAdsConfig(): String {
-        return JSONObject().apply {
-            put("gameId", "800426177")
-            put("organizationCoreId", "13470006284888")
-            put("rewardedPlacement", "Rewarded_Android")
-            put("testMode", false)
-        }.toString()
     }
 }
