@@ -95,48 +95,47 @@ export function createProceduralTextureSet(maxAnisotropy: number): ProceduralTex
   blueSwordEnergy.colorSpace = THREE.SRGBColorSpace;
   blueSwordEnergy.anisotropy = maxAnisotropy;
 
-  // 3. Crimson Inferno Magma Runed Greatsword Texture
+  // 3. Crimson Obsidian-Edge Greatsword Texture (Blood-red edges & glowing core vein)
   const [crimsonCanvas, crimsonCtx] = makeCanvas(256, 1024);
   const crimsonGrad = crimsonCtx.createLinearGradient(0, 0, 256, 0);
-  crimsonGrad.addColorStop(0, '#454852');
-  crimsonGrad.addColorStop(0.14, '#14151a');
-  crimsonGrad.addColorStop(0.32, '#2d0d08');
-  crimsonGrad.addColorStop(0.5, '#ff4818');
-  crimsonGrad.addColorStop(0.68, '#2d0d08');
-  crimsonGrad.addColorStop(0.86, '#14151a');
-  crimsonGrad.addColorStop(1, '#454852');
+  crimsonGrad.addColorStop(0, '#ff1f2d');
+  crimsonGrad.addColorStop(0.11, '#7f0a12');
+  crimsonGrad.addColorStop(0.24, '#111218');
+  crimsonGrad.addColorStop(0.45, '#19090d');
+  crimsonGrad.addColorStop(0.5, '#ff1a2b');
+  crimsonGrad.addColorStop(0.55, '#19090d');
+  crimsonGrad.addColorStop(0.76, '#111218');
+  crimsonGrad.addColorStop(0.89, '#7f0a12');
+  crimsonGrad.addColorStop(1, '#ff1f2d');
   crimsonCtx.fillStyle = crimsonGrad;
   crimsonCtx.fillRect(0, 0, 256, 1024);
 
-  // Outer crimson bevel edge glow
-  crimsonCtx.strokeStyle = '#ff6b2b';
-  crimsonCtx.shadowColor = '#ff2e00';
-  crimsonCtx.shadowBlur = 20;
-  crimsonCtx.lineWidth = 4;
-  crimsonCtx.strokeRect(24, 14, 208, 996);
+  // Razorsharp glowing blood-crimson blade bevels
+  crimsonCtx.strokeStyle = '#ff2a3c';
+  crimsonCtx.shadowColor = '#e11d48';
+  crimsonCtx.shadowBlur = 18;
+  crimsonCtx.lineWidth = 5;
+  crimsonCtx.strokeRect(14, 10, 228, 1004);
 
-  // Geometric runic magma circuitry down the blade fuller
-  crimsonCtx.strokeStyle = '#ff9a3c';
-  crimsonCtx.lineWidth = 3.2;
+  // Jagged crimson magma vein & runic notches down the fuller
+  crimsonCtx.strokeStyle = '#ff4d5a';
+  crimsonCtx.lineWidth = 3.5;
   crimsonCtx.beginPath();
-  crimsonCtx.moveTo(128, 22);
-  crimsonCtx.lineTo(128, 995);
+  crimsonCtx.moveTo(128, 18);
+  crimsonCtx.lineTo(128, 998);
   crimsonCtx.stroke();
 
-  for (let y = 64; y < 940; y += 72) {
+  for (let y = 58; y < 950; y += 64) {
     crimsonCtx.beginPath();
     crimsonCtx.moveTo(128, y);
-    crimsonCtx.lineTo(74, y + 24);
-    crimsonCtx.lineTo(74, y + 48);
+    crimsonCtx.lineTo(68, y + 20);
     crimsonCtx.moveTo(128, y);
-    crimsonCtx.lineTo(182, y + 24);
-    crimsonCtx.lineTo(182, y + 48);
+    crimsonCtx.lineTo(188, y + 20);
     crimsonCtx.stroke();
 
-    // Glowing magma ember nodes
-    crimsonCtx.fillStyle = '#ffd296';
+    crimsonCtx.fillStyle = '#ff9ca3';
     crimsonCtx.beginPath();
-    crimsonCtx.arc(128, y, 5, 0, Math.PI * 2);
+    crimsonCtx.arc(128, y, 4.2, 0, Math.PI * 2);
     crimsonCtx.fill();
   }
   crimsonCtx.shadowBlur = 0;

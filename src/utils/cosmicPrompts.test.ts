@@ -20,6 +20,12 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     assert.match(badmashPrompt, /MIC-DROP CLOSER/);
     assert.match(badmashPrompt, /1147/);
     assert.match(badmashPrompt, /Kalti maar/i);
+    assert.match(badmashPrompt, /Tereko/i);
+    assert.match(badmashPrompt, /Kaccha Limbu/i);
+    assert.match(badmashPrompt, /Hari Patti/i);
+    assert.match(badmashPrompt, /Kharcha-Paani/i);
+    assert.match(badmashPrompt, /Rapchik/i);
+    assert.match(badmashPrompt, /Sultana/i);
     assert.match(badmashPrompt, /never explicit pornography/i);
     assert.match(badmashPrompt, /Cosmic/);
   });

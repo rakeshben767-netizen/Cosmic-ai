@@ -688,42 +688,185 @@ export function createBlueKnightRig(
   };
 }
 
-function buildSkullArmrest(
-  boneMat: THREE.Material,
-  darkHollowMat: THREE.Material,
+function buildCrimsonSpikedPauldron(
+  side: -1 | 1,
+  armorMat: THREE.Material,
+  trimMat: THREE.Material,
+  crimsonGlowMat: THREE.Material,
   castShadow: boolean,
 ): THREE.Group {
-  const skull = new THREE.Group();
+  const group = new THREE.Group();
 
-  const cranium = new THREE.Mesh(new THREE.SphereGeometry(0.115, 14, 12), boneMat);
-  cranium.scale.set(0.95, 1.05, 1.15);
-  cranium.castShadow = castShadow;
-  skull.add(cranium);
+  // 4 layered draconic shoulder plates sweeping outward and upward
+  for (let t = 0; t < 4; t++) {
+    const scale = 1 - t * 0.13;
+    const plate = createBeveledShapeMesh(
+      [
+        [-0.14 * scale, 0.09 * scale],
+        [0.08 * scale, 0.15 * scale],
+        [0.21 * scale, 0.04 * scale],
+        [0.14 * scale, -0.08 * scale],
+        [-0.12 * scale, -0.05 * scale],
+      ],
+      0.21 * scale,
+      0.014,
+      t % 2 === 0 ? armorMat : trimMat,
+      castShadow,
+    );
+    plate.position.set(side * (0.04 + t * 0.055), 0.08 - t * 0.065, 0);
+    plate.rotation.z = side * -(0.28 + t * 0.24);
+    if (side === -1) {
+      plate.scale.x = -1;
+    }
+    group.add(plate);
 
-  const cheekLeft = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.06, 0.085), boneMat);
-  cheekLeft.position.set(-0.065, -0.055, 0.055);
-  skull.add(cheekLeft);
+    // Thin glowing crimson vein seam nestled under each armor tier
+    const vein = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16 * scale, 0.012, 0.2 * scale),
+      crimsonGlowMat,
+    );
+    vein.position.set(side * (0.05 + t * 0.055), 0.062 - t * 0.065, 0.01);
+    vein.rotation.z = side * -(0.28 + t * 0.24);
+    group.add(vein);
 
-  const cheekRight = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.06, 0.085), boneMat);
-  cheekRight.position.set(0.065, -0.055, 0.055);
-  skull.add(cheekRight);
-
-  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.065, 0.095), boneMat);
-  jaw.position.set(0, -0.105, 0.05);
-  skull.add(jaw);
-
-  for (const sx of [-0.042, 0.042]) {
-    const socket = new THREE.Mesh(new THREE.SphereGeometry(0.029, 8, 8), darkHollowMat);
-    socket.scale.set(1.1, 0.85, 0.6);
-    socket.position.set(sx, -0.005, 0.105);
-    skull.add(socket);
+    // Swept jagged shoulder blade spikes
+    const spike = new THREE.Mesh(
+      new THREE.ConeGeometry(0.025 * scale, 0.21 * scale, 4),
+      armorMat,
+    );
+    spike.position.set(side * (0.17 + t * 0.03), 0.13 - t * 0.068, -0.01);
+    spike.rotation.z = side * -(1.05 + t * 0.22);
+    group.add(spike);
   }
 
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.036, 3), darkHollowMat);
-  nose.position.set(0, -0.045, 0.116);
-  skull.add(nose);
+  // Upward shoulder blade horn rising near the collar
+  const crestHorn = new THREE.Mesh(new THREE.ConeGeometry(0.034, 0.24, 4), armorMat);
+  crestHorn.position.set(side * 0.03, 0.18, -0.02);
+  crestHorn.rotation.z = side * -0.42;
+  group.add(crestHorn);
 
-  return skull;
+  return group;
+}
+
+function buildCrimsonLegAssembly(
+  side: -1 | 1,
+  armorMat: THREE.MeshStandardMaterial,
+  darkSuitMat: THREE.MeshStandardMaterial,
+  trimMat: THREE.MeshStandardMaterial,
+  crimsonGlowMat: THREE.MeshStandardMaterial,
+  castShadow: boolean,
+): THREE.Group {
+  const leg = new THREE.Group();
+  const hipX = side * 0.185;
+  leg.position.set(hipX, 1.12, 0);
+  // Heroic wide warrior stance matching the standing Crimson Knight artwork
+  leg.rotation.z = side * 0.145;
+  leg.rotation.x = side === -1 ? -0.04 : 0.04;
+
+  const thighCore = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.36, 6, 12), darkSuitMat);
+  thighCore.position.set(0, -0.24, 0);
+  thighCore.castShadow = castShadow;
+  leg.add(thighCore);
+
+  // Sculpted dark obsidian thigh plate
+  const thighPlate = createBeveledShapeMesh(
+    [
+      [-0.115, 0.23],
+      [0.115, 0.23],
+      [0.095, -0.2],
+      [0, -0.27],
+      [-0.095, -0.2],
+    ],
+    0.13,
+    0.017,
+    armorMat,
+    castShadow,
+  );
+  thighPlate.position.set(0, -0.23, 0.045);
+  leg.add(thighPlate);
+
+  // Diagonal crimson vein etched across the thigh armor
+  const thighVein = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.015, 0.032), crimsonGlowMat);
+  thighVein.position.set(0, -0.19, 0.112);
+  thighVein.rotation.z = side * 0.42;
+  leg.add(thighVein);
+
+  // Sharp spiked knee poleyn + glowing crimson slit
+  const knee = createBeveledShapeMesh(
+    [
+      [0, 0.145],
+      [0.092, 0.02],
+      [0.062, -0.11],
+      [0, -0.155],
+      [-0.062, -0.11],
+      [-0.092, 0.02],
+    ],
+    0.11,
+    0.015,
+    trimMat,
+    castShadow,
+  );
+  knee.rotation.x = -0.18;
+  knee.position.set(0, -0.52, 0.115);
+  leg.add(knee);
+
+  const kneeVein = new THREE.Mesh(new THREE.OctahedronGeometry(0.024, 0), crimsonGlowMat);
+  kneeVein.scale.set(0.6, 1.8, 0.6);
+  kneeVein.position.set(0, -0.52, 0.175);
+  leg.add(kneeVein);
+
+  // Razor-ribbed Obsidian Shin Greave + Crimson Seam Vein
+  const greave = new THREE.Mesh(new THREE.CylinderGeometry(0.098, 0.074, 0.5, 8), armorMat);
+  greave.position.set(0, -0.82, 0.01);
+  greave.castShadow = castShadow;
+  leg.add(greave);
+
+  const shinRidge = createBeveledShapeMesh(
+    [
+      [-0.05, 0.24],
+      [0.05, 0.24],
+      [0.03, -0.24],
+      [0, -0.28],
+      [-0.03, -0.24],
+    ],
+    0.075,
+    0.013,
+    trimMat,
+    castShadow,
+  );
+  shinRidge.position.set(0, -0.82, 0.075);
+  leg.add(shinRidge);
+
+  const shinVein = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.36, 0.028), crimsonGlowMat);
+  shinVein.position.set(side * 0.042, -0.81, 0.095);
+  shinVein.rotation.z = side * -0.06;
+  leg.add(shinVein);
+
+  // Sabaton grounded flush on pedestal at y = 0
+  const foot = createBeveledShapeMesh(
+    [
+      [-0.076, 0.09],
+      [0.076, 0.09],
+      [0.082, -0.09],
+      [0, -0.18],
+      [-0.082, -0.09],
+    ],
+    0.098,
+    0.014,
+    armorMat,
+    castShadow,
+  );
+  foot.rotation.x = Math.PI / 2;
+  foot.rotation.z = -side * 0.14;
+  foot.position.set(-side * 0.02, -1.07, 0.11);
+  leg.add(foot);
+
+  const toeCap = new THREE.Mesh(new THREE.ConeGeometry(0.058, 0.14, 4), trimMat);
+  toeCap.rotation.x = Math.PI / 2;
+  toeCap.position.set(-side * 0.02, -1.08, 0.26);
+  leg.add(toeCap);
+
+  return leg;
 }
 
 export function createCrimsonOverlordRig(
@@ -737,58 +880,51 @@ export function createCrimsonOverlordRig(
     return item;
   };
 
-  const obsidianChromeMat = track(
+  const obsidianArmorMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0x15161b,
-      metalness: 0.94,
-      roughness: 0.19,
+      color: 0x14151c,
+      metalness: 0.92,
+      roughness: 0.22,
       bumpMap: textures.armorBump,
       bumpScale: 0.018,
       roughnessMap: textures.armorRoughness,
     }),
   );
 
-  const darkIronTrimMat = track(
+  const gunmetalTrimMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0x353844,
-      metalness: 0.95,
-      roughness: 0.18,
+      color: 0x2d303d,
+      metalness: 0.94,
+      roughness: 0.19,
     }),
   );
 
   const darkSuitMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0x0b0b0f,
+      color: 0x0b0b10,
       metalness: 0.2,
-      roughness: 0.78,
+      roughness: 0.76,
     }),
   );
 
-  const basaltStoneMat = track(
+  const crimsonGlowMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0x222024,
-      metalness: 0.18,
-      roughness: 0.86,
-      bumpMap: textures.armorBump,
-      bumpScale: 0.025,
-    }),
-  );
-
-  const skullBoneMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x5c534c,
-      metalness: 0.14,
-      roughness: 0.72,
-    }),
-  );
-
-  const infernoEmberMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0xff5a1f,
-      emissive: 0xff2f00,
+      color: 0xff1e2d,
+      emissive: 0xe11d48,
       emissiveIntensity: 1.55,
-      metalness: 0.2,
-      roughness: 0.22,
+      metalness: 0.22,
+      roughness: 0.18,
+    }),
+  );
+
+  const crimsonCapeMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0x16090c,
+      emissive: 0x7f0c18,
+      emissiveIntensity: 0.62,
+      metalness: 0.16,
+      roughness: 0.78,
+      side: THREE.DoubleSide,
     }),
   );
 
@@ -796,511 +932,431 @@ export function createCrimsonOverlordRig(
     new THREE.MeshStandardMaterial({
       color: 0xffffff,
       map: textures.crimsonSwordMagma,
-      emissive: 0xff3b10,
+      emissive: 0xff1e2d,
       emissiveMap: textures.crimsonSwordMagma,
-      emissiveIntensity: 1.5,
-      metalness: 0.55,
-      roughness: 0.22,
+      emissiveIntensity: 1.45,
+      metalness: 0.48,
+      roughness: 0.2,
     }),
   );
 
-  const capeMat = track(
+  const swordSpineMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0x160b0c,
-      emissive: 0x450a0a,
-      emissiveIntensity: 0.45,
-      metalness: 0.15,
-      roughness: 0.8,
-      side: THREE.DoubleSide,
+      color: 0x1a1c24,
+      emissive: 0x991b1b,
+      emissiveIntensity: 0.35,
+      metalness: 0.92,
+      roughness: 0.18,
     }),
   );
 
   // ============================================================================
-  // 1. JAGGED OBSIDIAN & SKULL THRONE (Grounded flush on pedestal at y = 0)
+  // 1. STANDING WARRIOR LEGS WITH CRIMSON VEIN ETCHINGS (Grounded at y = 0)
   // ============================================================================
-  const throneGroup = new THREE.Group();
-  root.add(throneGroup);
-
-  const daisBase = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.06, 1.18, 0.12, 8),
-    basaltStoneMat,
+  root.add(
+    buildCrimsonLegAssembly(-1, obsidianArmorMat, darkSuitMat, gunmetalTrimMat, crimsonGlowMat, castShadow),
   );
-  daisBase.position.set(0, 0.06, -0.05);
-  daisBase.receiveShadow = true;
-  throneGroup.add(daisBase);
-
-  const seatBlock = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.58, 0.66), basaltStoneMat);
-  seatBlock.position.set(0, 0.38, -0.14);
-  seatBlock.castShadow = castShadow;
-  seatBlock.receiveShadow = true;
-  throneGroup.add(seatBlock);
-
-  const seatSlab = createBeveledShapeMesh(
-    [
-      [-0.5, 0.34],
-      [0.5, 0.34],
-      [0.44, -0.34],
-      [-0.44, -0.34],
-    ],
-    0.1,
-    0.02,
-    darkIronTrimMat,
-    castShadow,
+  root.add(
+    buildCrimsonLegAssembly(1, obsidianArmorMat, darkSuitMat, gunmetalTrimMat, crimsonGlowMat, castShadow),
   );
-  seatSlab.rotation.x = Math.PI / 2;
-  seatSlab.position.set(0, 0.68, -0.12);
-  throneGroup.add(seatSlab);
-
-  // Towering jagged stone spires behind the knight
-  const backSpireSpecs: Array<[number, number, number, number, number, number]> = [
-    [0, 1.56, -0.46, 0.34, 1.95, 0],
-    [-0.28, 1.48, -0.44, 0.28, 1.75, 0.1],
-    [0.28, 1.48, -0.44, 0.28, 1.75, -0.1],
-    [-0.54, 1.32, -0.38, 0.24, 1.45, 0.22],
-    [0.54, 1.32, -0.38, 0.24, 1.45, -0.22],
-    [-0.72, 1.05, -0.28, 0.2, 1.05, 0.34],
-    [0.72, 1.05, -0.28, 0.2, 1.05, -0.34],
-  ];
-  for (const [sx, sy, sz, sw, sh, rz] of backSpireSpecs) {
-    const spire = createBeveledShapeMesh(
-      [
-        [0, sh * 0.55],
-        [sw * 0.55, -sh * 0.45],
-        [0, -sh * 0.55],
-        [-sw * 0.55, -sh * 0.45],
-      ],
-      0.16,
-      0.02,
-      basaltStoneMat,
-      castShadow,
-    );
-    spire.position.set(sx, sy, sz);
-    spire.rotation.z = rz;
-    spire.rotation.x = -0.06;
-    throneGroup.add(spire);
-  }
-
-  // Bone pillars & skull armrests flanking both sides
-  for (const side of [-1, 1] as const) {
-    const armWall = new THREE.Mesh(
-      new THREE.BoxGeometry(0.24, 0.72, 0.62),
-      basaltStoneMat,
-    );
-    armWall.position.set(side * 0.55, 0.44, -0.08);
-    armWall.castShadow = castShadow;
-    armWall.receiveShadow = true;
-    throneGroup.add(armWall);
-
-    const skull = buildSkullArmrest(skullBoneMat, darkSuitMat, castShadow);
-    skull.position.set(side * 0.56, 0.83, 0.14);
-    skull.rotation.y = side * -0.18;
-    throneGroup.add(skull);
-
-    // Bone support column beneath skull
-    const boneColumn = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.065, 0.085, 0.68, 7),
-      skullBoneMat,
-    );
-    boneColumn.position.set(side * 0.56, 0.42, 0.16);
-    boneColumn.castShadow = castShadow;
-    throneGroup.add(boneColumn);
-  }
 
   // ============================================================================
-  // 2. SEATED ARMORED LEGS (Planted firmly on the dais floor)
+  // 2. UPPER BODY — LEAN OBSIDIAN TORSO + BLAZING CRIMSON CHEST FISSURE
   // ============================================================================
-  for (const side of [-1, 1] as const) {
-    const legGroup = new THREE.Group();
-    legGroup.position.set(side * 0.21, 0.74, -0.08);
-    root.add(legGroup);
-
-    // Thigh extending forward on throne
-    const thigh = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.108, 0.34, 6, 10),
-      obsidianChromeMat,
-    );
-    thigh.rotation.x = Math.PI / 2 - 0.16;
-    thigh.rotation.z = -side * 0.16;
-    thigh.position.set(side * 0.06, -0.04, 0.22);
-    thigh.castShadow = castShadow;
-    legGroup.add(thigh);
-
-    // Sculpted Angular Knee Poleyn
-    const knee = createBeveledShapeMesh(
-      [
-        [0, 0.13],
-        [0.09, 0.02],
-        [0.06, -0.11],
-        [0, -0.15],
-        [-0.06, -0.11],
-        [-0.09, 0.02],
-      ],
-      0.1,
-      0.015,
-      darkIronTrimMat,
-      castShadow,
-    );
-    knee.position.set(side * 0.1, -0.09, 0.46);
-    knee.rotation.x = -0.35;
-    knee.rotation.y = side * 0.14;
-    legGroup.add(knee);
-
-    // Greave angling down to dais top (y ~ 0.12)
-    const greave = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.098, 0.075, 0.54, 8),
-      obsidianChromeMat,
-    );
-    greave.position.set(side * 0.11, -0.36, 0.49);
-    greave.rotation.x = 0.12;
-    greave.castShadow = castShadow;
-    legGroup.add(greave);
-
-    const shinRidge = createBeveledShapeMesh(
-      [
-        [-0.048, 0.23],
-        [0.048, 0.23],
-        [0.03, -0.23],
-        [0, -0.27],
-        [-0.03, -0.23],
-      ],
-      0.065,
-      0.012,
-      darkIronTrimMat,
-      castShadow,
-    );
-    shinRidge.position.set(side * 0.11, -0.36, 0.56);
-    shinRidge.rotation.x = 0.12;
-    legGroup.add(shinRidge);
-
-    // Armored Sabaton planted on dais top
-    const sabaton = createBeveledShapeMesh(
-      [
-        [-0.075, 0.08],
-        [0.075, 0.08],
-        [0.08, -0.09],
-        [0, -0.18],
-        [-0.08, -0.09],
-      ],
-      0.09,
-      0.014,
-      obsidianChromeMat,
-      castShadow,
-    );
-    sabaton.rotation.x = Math.PI / 2;
-    sabaton.rotation.z = -side * 0.14;
-    sabaton.position.set(side * 0.11, -0.58, 0.59);
-    legGroup.add(sabaton);
-  }
-
-  // ============================================================================
-  // 3. UPPER BODY — MOLTEN CRIMSON RIBCAGE CUIRASS + SPIKED WING PAULDRONS
-  // ============================================================================
-  const upperBodyBaseY = 0.78;
+  const upperBodyBaseY = 1.155;
   const upperBody = new THREE.Group();
-  upperBody.position.set(0, upperBodyBaseY, -0.12);
+  upperBody.position.set(0, upperBodyBaseY, 0);
   root.add(upperBody);
 
-  // Waist belt & crimson core clasp
+  // Belt & Crimson Diamond Buckle
   const belt = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.22, 0.21, 0.11, 8),
-    darkIronTrimMat,
+    new THREE.CylinderGeometry(0.205, 0.185, 0.095, 8),
+    gunmetalTrimMat,
   );
-  belt.position.set(0, 0.04, 0.02);
+  belt.position.set(0, 0.04, 0);
   upperBody.add(belt);
 
-  const beltRuby = new THREE.Mesh(new THREE.OctahedronGeometry(0.055, 0), infernoEmberMat);
-  beltRuby.position.set(0, 0.04, 0.22);
+  const beltRuby = new THREE.Mesh(new THREE.OctahedronGeometry(0.044, 0), crimsonGlowMat);
+  beltRuby.scale.set(0.75, 1.3, 0.55);
+  beltRuby.position.set(0, 0.045, 0.2);
   upperBody.add(beltRuby);
 
-  // Glowing inner magma torso core + 6 pairs of fiery molten ribs
-  const magmaCore = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.18, 0.15, 0.44, 10),
-    infernoEmberMat,
+  // Center Loincloth Tasset + Flared Crimson-Trimmmed Side Skirts
+  const frontLoincloth = createBeveledShapeMesh(
+    [
+      [-0.085, 0.24],
+      [0.085, 0.24],
+      [0.06, -0.28],
+      [0, -0.38],
+      [-0.06, -0.28],
+    ],
+    0.032,
+    0.01,
+    darkSuitMat,
+    castShadow,
   );
-  magmaCore.position.set(0, 0.36, 0.03);
-  upperBody.add(magmaCore);
+  frontLoincloth.rotation.x = -0.14;
+  frontLoincloth.position.set(0, -0.24, 0.185);
+  upperBody.add(frontLoincloth);
 
-  for (let i = 0; i < 4; i++) {
-    const ribGlow = new THREE.Mesh(
-      new THREE.TorusGeometry(0.175 + i * 0.014, 0.017, 6, 16, Math.PI * 0.85),
-      infernoEmberMat,
+  for (const side of [-1, 1] as const) {
+    const skirtFlap = createBeveledShapeMesh(
+      [
+        [-0.09, 0.28],
+        [0.09, 0.28],
+        [0.16, -0.44],
+        [-0.12, -0.34],
+      ],
+      0.025,
+      0.008,
+      obsidianArmorMat,
+      castShadow,
     );
-    ribGlow.rotation.x = Math.PI / 2 + 0.15;
-    ribGlow.rotation.z = -Math.PI * 0.92;
-    ribGlow.position.set(0, 0.2 + i * 0.085, 0.06);
-    upperBody.add(ribGlow);
+    skirtFlap.rotation.z = side * 0.34;
+    skirtFlap.rotation.y = side * 0.28;
+    skirtFlap.position.set(side * 0.22, -0.26, 0.05);
+    upperBody.add(skirtFlap);
 
-    // Outer dark chrome rib bars framing the glowing embers
-    for (const side of [-1, 1] as const) {
-      const ribBar = new THREE.Mesh(
-        new THREE.BoxGeometry(0.12 + i * 0.016, 0.024, 0.05),
-        obsidianChromeMat,
-      );
-      ribBar.position.set(side * (0.1 + i * 0.012), 0.2 + i * 0.085, 0.175);
-      ribBar.rotation.z = side * 0.24;
-      ribBar.rotation.y = side * -0.25;
-      upperBody.add(ribBar);
-    }
+    // Crimson glowing inner slit along hip tasset
+    const skirtVein = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.42, 0.02), crimsonGlowMat);
+    skirtVein.position.set(side * 0.22, -0.22, 0.13);
+    skirtVein.rotation.z = side * 0.32;
+    upperBody.add(skirtVein);
   }
 
-  // Heavy Obsidian Upper Chestplate + Jagged Collar Gorget
+  // Segmented Sculpted Abs + Glowing Crimson Side Seams
+  const abdomen = new THREE.Mesh(new THREE.CylinderGeometry(0.215, 0.17, 0.35, 8), darkSuitMat);
+  abdomen.position.set(0, 0.25, 0);
+  upperBody.add(abdomen);
+
+  for (let i = 0; i < 4; i++) {
+    const abPlate = createBeveledShapeMesh(
+      [
+        [-0.135 + i * 0.008, 0.026],
+        [0.135 - i * 0.008, 0.026],
+        [0.115 - i * 0.008, -0.026],
+        [-0.115 + i * 0.008, -0.026],
+      ],
+      0.16,
+      0.01,
+      obsidianArmorMat,
+      castShadow,
+    );
+    abPlate.position.set(0, 0.16 + i * 0.065, 0.04);
+    upperBody.add(abPlate);
+
+    const abVein = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.01, 0.025), crimsonGlowMat);
+    abVein.position.set(0, 0.192 + i * 0.065, 0.126);
+    upperBody.add(abVein);
+  }
+
+  // Sculpted V-Tapered Breastplate + Glowing Vertical Crimson Heart Core
   const chestPlate = createBeveledShapeMesh(
     [
-      [-0.3, 0.2],
-      [0.3, 0.2],
-      [0.24, 0.02],
-      [0.09, -0.1],
-      [0, -0.05],
-      [-0.09, -0.1],
-      [-0.24, 0.02],
+      [-0.295, 0.22],
+      [0.295, 0.22],
+      [0.255, 0.01],
+      [0.185, -0.19],
+      [0, -0.25],
+      [-0.185, -0.19],
+      [-0.255, 0.01],
     ],
     0.24,
     0.026,
-    obsidianChromeMat,
+    obsidianArmorMat,
     castShadow,
   );
-  chestPlate.position.set(0, 0.61, 0.03);
+  chestPlate.position.set(0, 0.56, 0.03);
   upperBody.add(chestPlate);
 
-  const chestMagmaHeart = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.052, 0),
-    infernoEmberMat,
+  // Blazing vertical crimson flame/fissure emblem on chest center
+  const chestFlameCore = createBeveledShapeMesh(
+    [
+      [0, 0.13],
+      [0.052, 0.02],
+      [0.024, -0.03],
+      [0.042, -0.12],
+      [0, -0.18],
+      [-0.042, -0.12],
+      [-0.024, -0.03],
+      [-0.052, 0.02],
+    ],
+    0.04,
+    0.006,
+    crimsonGlowMat,
+    false,
   );
-  chestMagmaHeart.scale.set(0.85, 1.25, 0.55);
-  chestMagmaHeart.position.set(0, 0.44, 0.195);
-  upperBody.add(chestMagmaHeart);
+  chestFlameCore.position.set(0, 0.57, 0.175);
+  upperBody.add(chestFlameCore);
+
+  // Diagonal crimson ribs flanking the chest core
+  for (const side of [-1, 1] as const) {
+    const chestCrack = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.014, 0.03), crimsonGlowMat);
+    chestCrack.position.set(side * 0.13, 0.64, 0.165);
+    chestCrack.rotation.z = side * 0.35;
+    upperBody.add(chestCrack);
+  }
+
+  // High-Spiked Armored Crimson Collar / Gorget
+  const collar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.145, 0.18, 0.15, 8, 1, true, Math.PI * 0.22, Math.PI * 1.56),
+    gunmetalTrimMat,
+  );
+  collar.rotation.y = Math.PI;
+  collar.position.set(0, 0.79, -0.01);
+  upperBody.add(collar);
+
+  for (const side of [-1, 1] as const) {
+    const collarEdge = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.14, 0.03), crimsonGlowMat);
+    collarEdge.position.set(side * 0.145, 0.8, 0.04);
+    collarEdge.rotation.z = side * -0.18;
+    upperBody.add(collarEdge);
+  }
 
   // ============================================================================
-  // 4. HORNED VERTICAL-SLATTED HELMET + GLOWING CRIMSON EYES
+  // 3. TALL HORNED GOTHIC HELMET + SHARP CRIMSON V-VISOR EYES
   // ============================================================================
   const headGroup = new THREE.Group();
-  headGroup.position.set(0, 0.92, 0.04);
+  headGroup.position.set(0, 0.96, 0.02);
   upperBody.add(headGroup);
 
-  const helmBase = new THREE.Mesh(new THREE.SphereGeometry(0.135, 16, 14), obsidianChromeMat);
-  helmBase.scale.set(0.92, 1.08, 1.04);
+  const helmBase = new THREE.Mesh(new THREE.SphereGeometry(0.132, 16, 14), obsidianArmorMat);
+  helmBase.scale.set(0.88, 1.08, 1.02);
   helmBase.castShadow = castShadow;
   headGroup.add(helmBase);
 
   const faceplate = createBeveledShapeMesh(
     [
-      [-0.09, 0.075],
-      [0.09, 0.075],
-      [0.068, -0.115],
-      [0, -0.15],
-      [-0.068, -0.115],
+      [-0.088, 0.068],
+      [0.088, 0.068],
+      [0.064, -0.115],
+      [0, -0.155],
+      [-0.064, -0.115],
     ],
-    0.09,
-    0.013,
-    obsidianChromeMat,
+    0.086,
+    0.012,
+    obsidianArmorMat,
     castShadow,
   );
-  faceplate.position.set(0, -0.02, 0.088);
+  faceplate.position.set(0, -0.025, 0.09);
   headGroup.add(faceplate);
 
-  // Fierce crimson glowing slit eyes
+  // Fierce sharp crimson V-visor eyes
   for (const side of [-1, 1] as const) {
-    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.018, 0.026), infernoEmberMat);
-    eye.position.set(side * 0.042, 0.022, 0.148);
-    eye.rotation.z = side * 0.24;
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.016, 0.028), crimsonGlowMat);
+    eye.position.set(side * 0.036, 0.018, 0.148);
+    eye.rotation.z = side * 0.26;
     headGroup.add(eye);
   }
 
-  // Vertical visor grille bars
-  for (let b = -3; b <= 3; b++) {
-    const bar = new THREE.Mesh(
-      new THREE.BoxGeometry(0.01, 0.125, 0.022),
-      darkIronTrimMat,
-    );
-    bar.position.set(b * 0.021, -0.05, 0.148);
-    headGroup.add(bar);
-  }
-
-  // Swept-back Jagged Horned Helmet Crown
-  const crownHorns: Array<[number, number, number, number, number, number, number]> = [
-    [0, 0.16, 0.02, -0.2, 0, 0, 0.2],
-    [-0.085, 0.15, 0.01, -0.12, 0, 0.42, 0.22],
-    [0.085, 0.15, 0.01, -0.12, 0, -0.42, 0.22],
-    [-0.135, 0.11, -0.03, -0.35, 0, 0.72, 0.24],
-    [0.135, 0.11, -0.03, -0.35, 0, -0.72, 0.24],
+  // Twin Tall Gothic Ear-Horns + Inner Crown Spikes (matching IMG_20261124_194857_497901a7.jpg)
+  const hornSpecs: Array<[number, number, number, number, number, number, number, number]> = [
+    // Tall outer crown ear-blades
+    [-0.072, 0.19, 0.01, -0.08, 0, 0.16, 0.032, 0.29],
+    [0.072, 0.19, 0.01, -0.08, 0, -0.16, 0.032, 0.29],
+    // Inner crown center blades
+    [-0.032, 0.16, 0.03, 0.05, 0, 0.08, 0.022, 0.17],
+    [0.032, 0.16, 0.03, 0.05, 0, -0.08, 0.022, 0.17],
+    // Back/temple ridges
+    [-0.112, 0.11, -0.03, -0.25, 0, 0.35, 0.024, 0.18],
+    [0.112, 0.11, -0.03, -0.25, 0, -0.35, 0.024, 0.18],
   ];
-  for (const [hx, hy, hz, rx, ry, rz, hLen] of crownHorns) {
-    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.028, hLen, 4), darkIronTrimMat);
+  for (const [hx, hy, hz, rx, ry, rz, radius, hLen] of hornSpecs) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(radius, hLen, 4), gunmetalTrimMat);
     horn.position.set(hx, hy, hz);
     horn.rotation.set(rx, ry, rz);
     headGroup.add(horn);
   }
 
   // ============================================================================
-  // 5. RIGHT ARM RESTING ON SKULL ARMREST (With Molten Forearm Cracks)
+  // 4. RIGHT ARM HOLDING CRIMSON-EDGE OBSIDIAN GREATSWORD (Viewer's Left)
   // ============================================================================
   const rightArmGroup = new THREE.Group();
-  rightArmGroup.position.set(-0.36, 0.67, 0.01);
+  rightArmGroup.position.set(-0.34, 0.69, 0.02);
   upperBody.add(rightArmGroup);
 
   rightArmGroup.add(
-    buildLayeredPauldron(-1, obsidianChromeMat, darkIronTrimMat, infernoEmberMat, castShadow, 4),
+    buildCrimsonSpikedPauldron(-1, obsidianArmorMat, gunmetalTrimMat, crimsonGlowMat, castShadow),
   );
 
-  const rUpperArm = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.075, 0.26, 5, 10),
-    darkSuitMat,
-  );
-  rUpperArm.position.set(-0.14, -0.18, 0.02);
-  rUpperArm.rotation.z = -0.38;
+  const rUpperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.072, 0.24, 5, 10), darkSuitMat);
+  rUpperArm.position.set(-0.11, -0.17, 0.02);
+  rUpperArm.rotation.z = -0.36;
   rightArmGroup.add(rUpperArm);
 
-  const rForearm = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.082, 0.068, 0.3, 8),
-    obsidianChromeMat,
-  );
-  rForearm.position.set(-0.2, -0.4, 0.16);
-  rForearm.rotation.set(1.05, 0, -0.15);
+  const rForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.066, 0.29, 8), obsidianArmorMat);
+  rForearm.position.set(-0.21, -0.38, 0.12);
+  rForearm.rotation.set(-0.42, 0, -0.32);
   rForearm.castShadow = castShadow;
   rightArmGroup.add(rForearm);
 
-  // Glowing ember cracks on right bracer
-  const rBracerEmber = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.15, 0.035), infernoEmberMat);
-  rBracerEmber.position.set(-0.22, -0.38, 0.21);
-  rBracerEmber.rotation.set(1.05, 0, -0.15);
-  rightArmGroup.add(rBracerEmber);
+  // Spiked crimson-veined right gauntlet bracer
+  for (let s = 0; s < 2; s++) {
+    const rSpike = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.11, 4), gunmetalTrimMat);
+    rSpike.position.set(-0.27 - s * 0.015, -0.32 - s * 0.08, 0.1);
+    rSpike.rotation.z = 0.85;
+    rightArmGroup.add(rSpike);
+  }
+  const rBracerVein = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.18, 0.024), crimsonGlowMat);
+  rBracerVein.position.set(-0.25, -0.37, 0.16);
+  rBracerVein.rotation.set(-0.42, 0, -0.32);
+  rightArmGroup.add(rBracerVein);
 
-  const rGauntlet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.068, 10, 8),
-    obsidianChromeMat,
-  );
-  rGauntlet.position.set(-0.2, -0.49, 0.29);
+  const rGauntlet = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 8), obsidianArmorMat);
+  rGauntlet.position.set(-0.24, -0.5, 0.21);
   rightArmGroup.add(rGauntlet);
 
-  // ============================================================================
-  // 6. LEFT ARM HOLDING ENORMOUS CRIMSON RUNED GREATSWORD
-  // ============================================================================
-  const leftArmGroup = new THREE.Group();
-  leftArmGroup.position.set(0.36, 0.67, 0.02);
-  upperBody.add(leftArmGroup);
-
-  leftArmGroup.add(
-    buildLayeredPauldron(1, obsidianChromeMat, darkIronTrimMat, infernoEmberMat, castShadow, 4),
-  );
-
-  const lUpperArm = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.075, 0.26, 5, 10),
-    darkSuitMat,
-  );
-  lUpperArm.position.set(0.16, -0.14, 0.06);
-  lUpperArm.rotation.z = 0.58;
-  lUpperArm.rotation.x = -0.28;
-  leftArmGroup.add(lUpperArm);
-
-  const lForearm = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.084, 0.07, 0.28, 8),
-    obsidianChromeMat,
-  );
-  lForearm.position.set(0.28, -0.13, 0.24);
-  lForearm.rotation.set(-0.85, 0, 0.45);
-  lForearm.castShadow = castShadow;
-  leftArmGroup.add(lForearm);
-
-  const lGauntlet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.068, 10, 8),
-    obsidianChromeMat,
-  );
-  lGauntlet.position.set(0.31, -0.05, 0.34);
-  leftArmGroup.add(lGauntlet);
-
-  // Giant Crimson Magma Runed Greatsword resting tip-down to floor
+  // Giant Crimson-Edged Obsidian Greatsword pointing downward-inward like the artwork
   const swordGroup = new THREE.Group();
-  swordGroup.position.set(0.32, -0.04, 0.36);
-  swordGroup.rotation.set(-0.08, -0.14, -0.18);
-  leftArmGroup.add(swordGroup);
+  swordGroup.position.set(-0.24, -0.5, 0.23);
+  swordGroup.rotation.set(0.08, 0.12, 0.18);
+  rightArmGroup.add(swordGroup);
 
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.028, 0.42, 8), darkSuitMat);
-  grip.position.set(0, 0.08, 0);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.024, 0.36, 8), darkSuitMat);
+  grip.position.set(0, 0.06, 0);
   swordGroup.add(grip);
 
-  const pommel = new THREE.Mesh(new THREE.OctahedronGeometry(0.062, 0), darkIronTrimMat);
-  pommel.scale.set(0.9, 1.4, 0.72);
-  pommel.position.set(0, 0.31, 0);
+  const pommel = new THREE.Mesh(new THREE.OctahedronGeometry(0.052, 0), gunmetalTrimMat);
+  pommel.scale.set(0.85, 1.35, 0.65);
+  pommel.position.set(0, 0.26, 0);
   swordGroup.add(pommel);
 
   const crossguard = createBeveledShapeMesh(
     [
-      [-0.36, 0.14],
-      [-0.14, 0.05],
-      [0, 0.14],
-      [0.14, 0.05],
-      [0.36, 0.14],
-      [0.2, -0.1],
-      [0, -0.18],
-      [-0.2, -0.1],
+      [-0.28, 0.09],
+      [-0.1, 0.04],
+      [0, 0.12],
+      [0.1, 0.04],
+      [0.28, 0.09],
+      [0.14, -0.06],
+      [0, -0.14],
+      [-0.14, -0.06],
     ],
-    0.075,
-    0.015,
-    obsidianChromeMat,
+    0.055,
+    0.012,
+    obsidianArmorMat,
     castShadow,
   );
-  crossguard.position.set(0, -0.16, 0);
+  crossguard.position.set(0, -0.14, 0);
   swordGroup.add(crossguard);
 
-  const guardRuby = new THREE.Mesh(new THREE.OctahedronGeometry(0.075, 0), infernoEmberMat);
-  guardRuby.scale.set(0.8, 1.35, 0.6);
-  guardRuby.position.set(0, -0.18, 0.048);
+  const guardRuby = new THREE.Mesh(new THREE.OctahedronGeometry(0.056, 0), crimsonGlowMat);
+  guardRuby.scale.set(0.7, 1.4, 0.55);
+  guardRuby.position.set(0, -0.16, 0.036);
   swordGroup.add(guardRuby);
 
-  const blade = createBeveledShapeMesh(
+  const bladeCore = createBeveledShapeMesh(
     [
-      [-0.165, 0.68],
-      [0.165, 0.68],
-      [0.15, -0.58],
-      [0, -0.82],
-      [-0.15, -0.58],
+      [-0.105, 0.56],
+      [0.105, 0.56],
+      [0.082, -0.44],
+      [0, -0.68],
+      [-0.082, -0.44],
     ],
-    0.036,
-    0.011,
+    0.026,
+    0.008,
     crimsonSwordMat,
     castShadow,
   );
-  blade.position.set(0, -0.94, 0);
-  swordGroup.add(blade);
+  bladeCore.position.set(0, -0.76, 0);
+  swordGroup.add(bladeCore);
 
-  // Dark Flowing Tattered Mantle draping over Throne
+  // Dark obsidian fuller spine down middle of sword
+  const bladeSpine = createBeveledShapeMesh(
+    [
+      [-0.035, 0.52],
+      [0.035, 0.52],
+      [0.02, -0.4],
+      [0, -0.58],
+      [-0.02, -0.4],
+    ],
+    0.032,
+    0.005,
+    swordSpineMat,
+    false,
+  );
+  bladeSpine.position.set(0, -0.74, 0.002);
+  swordGroup.add(bladeSpine);
+
+  // ============================================================================
+  // 5. LEFT ARM IN CLENCHED BATTLE STANCE WITH SPIKED GAUNTLET (Viewer's Right)
+  // ============================================================================
+  const leftArmGroup = new THREE.Group();
+  leftArmGroup.position.set(0.34, 0.69, 0.02);
+  upperBody.add(leftArmGroup);
+
+  leftArmGroup.add(
+    buildCrimsonSpikedPauldron(1, obsidianArmorMat, gunmetalTrimMat, crimsonGlowMat, castShadow),
+  );
+
+  const lUpperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.072, 0.24, 5, 10), darkSuitMat);
+  lUpperArm.position.set(0.11, -0.18, 0);
+  lUpperArm.rotation.z = 0.28;
+  leftArmGroup.add(lUpperArm);
+
+  const lForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.066, 0.29, 8), obsidianArmorMat);
+  lForearm.position.set(0.18, -0.42, 0.08);
+  lForearm.rotation.set(-0.32, 0, 0.16);
+  lForearm.castShadow = castShadow;
+  leftArmGroup.add(lForearm);
+
+  for (let s = 0; s < 2; s++) {
+    const lSpike = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.11, 4), gunmetalTrimMat);
+    lSpike.position.set(0.24 + s * 0.015, -0.36 - s * 0.08, 0.06);
+    lSpike.rotation.z = -0.85;
+    leftArmGroup.add(lSpike);
+  }
+
+  const lBracerVein = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.18, 0.024), crimsonGlowMat);
+  lBracerVein.position.set(0.21, -0.42, 0.135);
+  lBracerVein.rotation.set(-0.32, 0, 0.16);
+  leftArmGroup.add(lBracerVein);
+
+  const lHand = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 8), obsidianArmorMat);
+  lHand.position.set(0.16, -0.57, 0.14);
+  leftArmGroup.add(lHand);
+
+  // ============================================================================
+  // 6. DRAMATIC TATTERED CRIMSON-UNDERLIT WAR CAPE
+  // ============================================================================
   const capeFronds: THREE.Mesh[] = [];
-  const frondAngles = [-0.45, -0.16, 0.16, 0.45];
+  const frondAngles = [-0.62, -0.38, -0.14, 0.14, 0.38, 0.62];
   for (let i = 0; i < frondAngles.length; i++) {
     const frond = createBeveledShapeMesh(
       [
-        [-0.16, 0.55],
-        [0.16, 0.55],
-        [0.22, -0.45],
-        [0, -0.64],
-        [-0.22, -0.45],
+        [-0.16, 0.68],
+        [0.16, 0.68],
+        [0.25, -0.68],
+        [0.08, -0.92],
+        [-0.06, -0.72],
+        [-0.23, -0.88],
       ],
       0.012,
       0.004,
-      capeMat,
+      crimsonCapeMat,
       castShadow,
     );
-    frond.position.set(frondAngles[i] * 0.72, 0.1, -0.2 - Math.abs(frondAngles[i]) * 0.08);
-    frond.rotation.set(0.18, frondAngles[i] * 0.25, frondAngles[i] * 0.35);
+    frond.position.set(frondAngles[i] * 0.96, -0.04, -0.24 - Math.abs(frondAngles[i]) * 0.14);
+    frond.rotation.set(0.24, frondAngles[i] * 0.38, frondAngles[i] * 0.52);
     upperBody.add(frond);
     capeFronds.push(frond);
   }
 
-  const auraLight = new THREE.PointLight(0xff3b10, 3.3, 6.2, 1.5);
-  auraLight.position.set(0.08, 1.35, 0.85);
+  const auraLight = new THREE.PointLight(0xff1e2d, 3.0, 5.8, 1.5);
+  auraLight.position.set(0, 1.55, 0.78);
   root.add(auraLight);
 
   return {
     root,
     upperBody,
     upperBodyBaseY,
-    isSeated: true,
+    isSeated: false,
     headGroup,
     rightArmGroup,
     leftArmGroup,
     swordGroup,
     capeFronds,
-    emissiveMaterials: [infernoEmberMat, crimsonSwordMat, capeMat],
+    emissiveMaterials: [crimsonGlowMat, crimsonSwordMat, crimsonCapeMat],
     auraLight,
     dispose: () => {
       disposables.forEach((d) => d.dispose());

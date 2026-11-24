@@ -94,7 +94,7 @@ export default function App() {
             ·
           </span>
           <span className="text-slate-200">
-            {isBadmash ? 'Crimson Overlord · Badmash Mode' : 'Blue Knight · Normal Mode'}
+            {isBadmash ? 'Crimson Knight · Badmash Mode' : 'Blue Knight · Normal Mode'}
           </span>
           <span aria-hidden="true" className="text-slate-600">
             ·

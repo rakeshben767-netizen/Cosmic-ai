@@ -856,7 +856,7 @@ export function useCosmicLive() {
       'info',
       'gemini',
       next === 'badmash'
-        ? 'BADMASH MODE ON -> Switching to Crimson Overlord + Crisp Charon voice.'
+        ? 'BADMASH MODE ON -> Switching to Crimson Knight + Crisp Charon voice.'
         : 'NORMAL MODE ON -> Switching to Blue Knight + Friendly voice (Zephyr).',
     );
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {

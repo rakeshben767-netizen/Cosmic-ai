@@ -294,9 +294,9 @@ export function CosmicKnightCanvas({
 
     // Pre-allocated scratch helpers (zero GC inside animation loop)
     const normalRimColor = new THREE.Color(0x38bdf8);
-    const badmashRimColor = new THREE.Color(0xff4518);
-    const badmashEmberColor = new THREE.Color(0xf97316);
-    const badmashAuraBase = new THREE.Color(0xff2e00);
+    const badmashRimColor = new THREE.Color(0xff1e2d);
+    const badmashEmberColor = new THREE.Color(0xe11d48);
+    const badmashAuraBase = new THREE.Color(0xdc2626);
     const normalAuraBase = new THREE.Color(0x22d3ee);
     const normalParticleColor = new THREE.Color(0x38bdf8);
     const errorColor = new THREE.Color(0xef4444);
@@ -345,14 +345,14 @@ export function CosmicKnightCanvas({
       const isBadmash = modeRef.current === 'badmash';
       const currentState = stateRef.current;
 
-      // Instant mode switch (Blue Knight <-> Crimson Inferno Overlord)
+      // Instant mode switch (Blue Knight <-> Crimson Shadow Knight)
       if (lastPaintedMode !== modeRef.current) {
         lastPaintedMode = modeRef.current;
         blueKnight.root.visible = !isBadmash;
         crimsonKnight.root.visible = isBadmash;
         runeTopMat.map = isBadmash ? textures.pedestalRuneCrimson : textures.pedestalRuneBlue;
         runeTopMat.emissiveMap = runeTopMat.map;
-        runeTopMat.emissive.setHex(isBadmash ? 0xff3b10 : 0x0284c7);
+        runeTopMat.emissive.setHex(isBadmash ? 0xe11d48 : 0x0284c7);
         runeTopMat.needsUpdate = true;
       }
 
@@ -390,7 +390,7 @@ export function CosmicKnightCanvas({
         const progress = 1 - transitionPulseRef.current;
         shockwaveMesh.scale.setScalar(0.8 + progress * 1.25);
         shockwaveMesh.position.y = 0.08 + progress * 1.35;
-        shockwaveMat.color.setHex(isBadmash ? 0xff3b10 : 0x38bdf8);
+        shockwaveMat.color.setHex(isBadmash ? 0xff1e2d : 0x38bdf8);
         shockwaveMat.opacity = transitionPulseRef.current * 0.8;
       } else {
         transitionPulseRef.current = 0;
@@ -404,20 +404,15 @@ export function CosmicKnightCanvas({
       activeRig.upperBody.position.y =
         activeRig.upperBodyBaseY + Math.sin(elapsed * breathFreq) * breathAmp;
 
-      // Subtle commanding head & posture response (seated throne composure in Badmash Mode)
+      // Dynamic heroic standing combat posture
       if (currentState === 'SPEAKING') {
-        const swagger = isBadmash ? 1.25 : 1.0;
+        const swagger = isBadmash ? 1.22 : 1.0;
         activeRig.headGroup.rotation.y = Math.sin(elapsed * 2.4) * 0.085 * swagger;
         activeRig.headGroup.rotation.x = Math.sin(elapsed * 5.2) * 0.05 * (0.4 + smoothedAudio);
-        activeRig.upperBody.rotation.y = Math.sin(elapsed * 1.6) * (activeRig.isSeated ? 0.032 : 0.055);
-        activeRig.upperBody.rotation.x = isBadmash ? 0.03 + smoothedAudio * 0.035 : 0;
-        if (activeRig.isSeated) {
-          activeRig.rightArmGroup.rotation.x = Math.sin(elapsed * 2.8) * 0.018;
-          activeRig.leftArmGroup.rotation.z = Math.sin(elapsed * 3.8) * 0.028 * smoothedAudio;
-        } else {
-          activeRig.leftArmGroup.rotation.z = Math.sin(elapsed * 4.5) * 0.065 * smoothedAudio;
-          activeRig.rightArmGroup.rotation.x = Math.sin(elapsed * 3.1) * 0.035;
-        }
+        activeRig.upperBody.rotation.y = Math.sin(elapsed * 1.6) * 0.055;
+        activeRig.upperBody.rotation.x = isBadmash ? 0.025 + smoothedAudio * 0.03 : 0;
+        activeRig.leftArmGroup.rotation.z = Math.sin(elapsed * 4.5) * 0.06 * smoothedAudio;
+        activeRig.rightArmGroup.rotation.x = Math.sin(elapsed * 3.1) * 0.032;
       } else if (currentState === 'LISTENING') {
         activeRig.headGroup.rotation.y = Math.sin(elapsed * 0.9) * 0.04;
         activeRig.headGroup.rotation.x = 0.05;
@@ -442,11 +437,10 @@ export function CosmicKnightCanvas({
       const capeEnergy = 1 + smoothedAudio * (isBadmash ? 2.6 : 2.4);
       for (let i = 0; i < activeRig.capeFronds.length; i++) {
         const frond = activeRig.capeFronds[i];
-        const baseX = activeRig.isSeated ? 0.18 : 0.24;
-        frond.rotation.x = baseX + Math.sin(elapsed * 2.1 + i * 0.8) * 0.04 * capeEnergy;
+        frond.rotation.x = 0.24 + Math.sin(elapsed * 2.1 + i * 0.8) * 0.04 * capeEnergy;
       }
 
-      // Voice-reactive emissive glow on armor ribs, eyes & sword
+      // Voice-reactive emissive glow on chest crack, eyes & sword
       const glowMult =
         currentState === 'SPEAKING'
           ? (isBadmash ? 1.42 : 1.18) + smoothedAudio * (isBadmash ? 1.45 : 1.15)
@@ -461,7 +455,7 @@ export function CosmicKnightCanvas({
       } else {
         activeRig.auraLight.color.copy(normalAuraBase);
       }
-      activeRig.auraLight.intensity = (isBadmash ? 3.2 : 2.2) * (0.85 + smoothedAudio * 0.95);
+      activeRig.auraLight.intensity = (isBadmash ? 3.1 : 2.2) * (0.85 + smoothedAudio * 0.95);
 
       // Update floating particles
       const posAttr = particleGeo.getAttribute('position') as THREE.BufferAttribute;
@@ -539,7 +533,7 @@ export function CosmicKnightCanvas({
   if (webglUnavailable || contextLost) {
     const fallbackSrc =
       mode === 'badmash'
-        ? '/assets/aistudio/IMG_20261124_212045_5388f310.jpg'
+        ? '/assets/aistudio/IMG_20261124_194857_497901a7.jpg'
         : '/assets/aistudio/IMG_20261122_150432_29af8877.jpg';
     return (
       <div
@@ -548,7 +542,7 @@ export function CosmicKnightCanvas({
       >
         <img
           src={fallbackSrc}
-          alt={mode === 'badmash' ? 'Cosmic AI Crimson Overlord' : 'Cosmic AI Blue Knight'}
+          alt={mode === 'badmash' ? 'Cosmic AI Crimson Knight' : 'Cosmic AI Blue Knight'}
           referrerPolicy="no-referrer"
           className="h-full max-h-[82vh] w-auto object-contain"
         />
