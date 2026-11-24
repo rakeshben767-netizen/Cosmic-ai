@@ -39,10 +39,10 @@ import java.util.concurrent.ConcurrentHashMap
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        private const val UNITY_GAME_ID = "800447797"
+        private const val UNITY_GAME_ID = "800426177"
         private const val UNITY_TEST_MODE = false
-        private const val PLACEMENT_REWARDED_PRIMARY = "Rewarded_Androidd"
-        private const val PLACEMENT_REWARDED_ALT = "Rewarded_Android"
+        private const val PLACEMENT_REWARDED_PRIMARY = "Rewarded_Android"
+        private const val PLACEMENT_REWARDED_ALT = "Rewarded_Androidd"
         private val REWARDED_PLACEMENTS = listOf(
             PLACEMENT_REWARDED_PRIMARY,
             PLACEMENT_REWARDED_ALT
