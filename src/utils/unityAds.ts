@@ -1,13 +1,10 @@
 export const UNITY_ADS_CONFIG = {
   gameId: '800447797',
   organizationCoreId: '13470006284888',
-  interstitialPlacement: 'BP_Interstitial_Android',
-  rewardedPlacement: 'Rewarded_Android',
+  rewardedPlacement: 'Rewarded_Androidd',
 } as const;
 
-export type UnityAdPlacement =
-  | typeof UNITY_ADS_CONFIG.interstitialPlacement
-  | typeof UNITY_ADS_CONFIG.rewardedPlacement;
+export type UnityAdPlacement = typeof UNITY_ADS_CONFIG.rewardedPlacement;
 
 export interface WebAdPromptRequest {
   placement: UnityAdPlacement;
