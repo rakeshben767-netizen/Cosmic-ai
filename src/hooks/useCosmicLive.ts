@@ -38,6 +38,7 @@ interface ServerWsMessage {
   type:
     | 'connected'
     | 'mode_updated'
+    | 'developer_verified'
     | 'disconnected'
     | 'session_closed'
     | 'audio'
@@ -50,6 +51,8 @@ interface ServerWsMessage {
   mode?: CosmicMode;
   model?: string;
   voice?: string;
+  developerVerified?: boolean;
+  verified?: boolean;
   data?: string;
   mimeType?: string;
   text?: string;
@@ -58,6 +61,22 @@ interface ServerWsMessage {
   message?: string;
   calls?: ToolCallPayload[];
 }
+
+function buildVoiceTextureCurve(roughnessMix: number): Float32Array<ArrayBuffer> {
+  const samples = 1024;
+  const buffer = new ArrayBuffer(samples * 4);
+  const curve = new Float32Array(buffer);
+  for (let i = 0; i < samples; i++) {
+    const x = (i * 2) / (samples - 1) - 1;
+    // Gentle warm husky saturation (~5% mix in Badmash mode, exact identity in Normal mode)
+    const warm = Math.tanh(2.2 * x) / Math.tanh(2.2);
+    curve[i] = (1 - roughnessMix) * x + roughnessMix * warm;
+  }
+  return curve;
+}
+
+const NORMAL_CURVE = buildVoiceTextureCurve(0);
+const BADMASH_HUSKY_CURVE = buildVoiceTextureCurve(0.05);
 
 const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
@@ -105,6 +124,7 @@ export function useCosmicLive() {
   const [mode, setMode] = useState<CosmicMode>('normal');
   const [cosmicState, setCosmicState] = useState<CosmicState>('IDLE');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [isDeveloperVerified, setIsDeveloperVerified] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [micNotice, setMicNotice] = useState<string | null>(null);
   const [backendUrl, setBackendUrlState] = useState<string>(() => getInitialBackendUrl());
@@ -130,8 +150,9 @@ export function useCosmicLive() {
   const isMicMutedRef = useRef<boolean>(isMicMuted);
   const audioLevelRef = useRef<number>(0);
 
-  // Persistent single AudioContext + Badmash Kadak EQ -> Compressor -> GainNode -> Analyser -> destination
+  // Persistent single AudioContext + Badmash Husky/Bass EQ -> Compressor -> GainNode -> Analyser -> destination
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const badmashRoughnessShaperRef = useRef<WaveShaperNode | null>(null);
   const badmashBassFilterRef = useRef<BiquadFilterNode | null>(null);
   const badmashPresenceFilterRef = useRef<BiquadFilterNode | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
@@ -152,10 +173,14 @@ export function useCosmicLive() {
 
   useEffect(() => {
     modeRef.current = mode;
+    const shaper = badmashRoughnessShaperRef.current;
     const bassFilter = badmashBassFilterRef.current;
     const presenceFilter = badmashPresenceFilterRef.current;
     const gainNode = masterGainRef.current;
     const ctx = audioCtxRef.current;
+    if (shaper) {
+      shaper.curve = mode === 'badmash' ? BADMASH_HUSKY_CURVE : NORMAL_CURVE;
+    }
     if (ctx && ctx.state !== 'closed') {
       if (bassFilter) {
         bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 5.2 : 0, ctx.currentTime, 0.06);
@@ -249,6 +274,10 @@ export function useCosmicLive() {
       presenceFilter.Q.value = 1.1;
       presenceFilter.gain.value = modeRef.current === 'badmash' ? 2.6 : 0;
 
+      const roughnessShaper = ctx.createWaveShaper();
+      roughnessShaper.oversample = '2x';
+      roughnessShaper.curve = modeRef.current === 'badmash' ? BADMASH_HUSKY_CURVE : NORMAL_CURVE;
+
       const compressor = ctx.createDynamicsCompressor();
       compressor.threshold.value = -16;
       compressor.knee.value = 12;
@@ -263,12 +292,14 @@ export function useCosmicLive() {
       analyser.fftSize = 256;
 
       bassFilter.connect(presenceFilter);
-      presenceFilter.connect(compressor);
+      presenceFilter.connect(roughnessShaper);
+      roughnessShaper.connect(compressor);
       compressor.connect(gain);
       gain.connect(analyser);
       analyser.connect(ctx.destination);
 
       audioCtxRef.current = ctx;
+      badmashRoughnessShaperRef.current = roughnessShaper;
       badmashBassFilterRef.current = bassFilter;
       badmashPresenceFilterRef.current = presenceFilter;
       masterGainRef.current = gain;
@@ -597,6 +628,9 @@ export function useCosmicLive() {
       if (msg.type === 'connected' || msg.type === 'mode_updated') {
         setErrorMessage(null);
         setCosmicState('LISTENING');
+        if (typeof msg.developerVerified === 'boolean') {
+          setIsDeveloperVerified(msg.developerVerified);
+        }
         setDiagnostics((prev) => ({
           ...prev,
           activeModel: msg.model || prev.activeModel,
@@ -607,6 +641,12 @@ export function useCosmicLive() {
           'gemini',
           `${msg.type === 'mode_updated' ? 'Switched mode' : 'Connected'} -> model=${msg.model}, voice=${msg.voice}, mode=${msg.mode}`,
         );
+        return;
+      }
+
+      if (msg.type === 'developer_verified') {
+        setIsDeveloperVerified(Boolean(msg.verified));
+        addLog('info', 'gemini', 'Developer session verified -> Respect Mode enabled.');
         return;
       }
 
@@ -1012,6 +1052,7 @@ export function useCosmicLive() {
     mode,
     cosmicState,
     isMicMuted,
+    isDeveloperVerified,
     errorMessage,
     micNotice,
     backendUrl,

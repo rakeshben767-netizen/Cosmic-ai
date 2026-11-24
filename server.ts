@@ -13,9 +13,12 @@ import {
 import {
   buildCosmicSystemInstruction,
   COSMIC_BADMASH_ENTRANCE_CUE,
+  COSMIC_DEVELOPER_RESPECT_NOTICE,
   COSMIC_TOOL_DECLARATIONS,
   getVoiceNameForMode,
+  type CosmicPromptOptions,
 } from './src/utils/cosmicPrompts.ts';
+import { verifyDeveloperCode } from './src/utils/developerAuth.ts';
 import type { CosmicMode } from './src/types/cosmic.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -74,12 +77,13 @@ function sendJson(ws: WebSocket, payload: Record<string, unknown>): void {
 async function connectGeminiLiveWithFallback(
   ai: GoogleGenAI,
   mode: CosmicMode,
+  promptOptions: CosmicPromptOptions,
   onMessage: (message: LiveServerMessage) => void,
   onSessionClosed: (reason: string) => void,
   onSessionError: (errMsg: string) => void,
 ): Promise<{ session: LiveSession; model: string; voice: string }> {
   const voice = getVoiceNameForMode(mode);
-  const systemInstruction = buildCosmicSystemInstruction(mode);
+  const systemInstruction = buildCosmicSystemInstruction(mode, promptOptions);
   const errors: string[] = [];
 
   for (const model of LIVE_MODEL_CANDIDATES) {
@@ -256,9 +260,39 @@ async function startServer() {
   wss.on('connection', (clientWs) => {
     let activeSession: LiveSession | null = null;
     let activeMode: CosmicMode = 'normal';
+    let isDeveloperVerified = false;
+    const recentAssistantOpeners: string[] = [];
+    let currentInputTranscriptBuffer = '';
+    let currentOutputTranscriptBuffer = '';
     let isSwitching = false;
     let clientClosed = false;
     let connectNonce = 0;
+
+    const recordAssistantOpener = (fullText: string) => {
+      const cleaned = fullText.replace(/\s+/g, ' ').trim();
+      if (!cleaned) return;
+      const firstSentence = cleaned.split(/(?<=[.!?])\s+/)[0]?.slice(0, 120) || cleaned.slice(0, 120);
+      if (firstSentence.length < 8) return;
+      if (recentAssistantOpeners[recentAssistantOpeners.length - 1] !== firstSentence) {
+        recentAssistantOpeners.push(firstSentence);
+        if (recentAssistantOpeners.length > 6) {
+          recentAssistantOpeners.shift();
+        }
+      }
+    };
+
+    const promoteDeveloperRespectMode = (triggerSession: LiveSession | null) => {
+      if (isDeveloperVerified) return;
+      isDeveloperVerified = true;
+      sendJson(clientWs, { type: 'developer_verified', verified: true });
+      if (triggerSession) {
+        try {
+          triggerSession.sendRealtimeInput({ text: COSMIC_DEVELOPER_RESPECT_NOTICE });
+        } catch (err) {
+          console.warn('[Cosmic Live] Failed injecting Respect Mode notice:', err);
+        }
+      }
+    };
 
     const closeActiveSession = () => {
       if (activeSession) {
@@ -294,6 +328,10 @@ async function startServer() {
         const { session, model, voice } = await connectGeminiLiveWithFallback(
           ai,
           targetMode,
+          {
+            developerVerified: isDeveloperVerified,
+            recentResponses: recentAssistantOpeners,
+          },
           (message: LiveServerMessage) => {
             if (clientClosed || myNonce !== connectNonce) return;
 
@@ -311,24 +349,37 @@ async function startServer() {
             }
 
             if (serverContent?.interrupted) {
+              currentOutputTranscriptBuffer = '';
               sendJson(clientWs, { type: 'interrupted' });
             }
 
             if (serverContent?.turnComplete || serverContent?.generationComplete) {
+              if (currentOutputTranscriptBuffer.trim()) {
+                recordAssistantOpener(currentOutputTranscriptBuffer);
+              }
+              currentInputTranscriptBuffer = '';
+              currentOutputTranscriptBuffer = '';
               sendJson(clientWs, { type: 'turn_complete' });
             }
 
             if (serverContent?.inputTranscription?.text) {
+              const incomingChunk = serverContent.inputTranscription.text;
+              currentInputTranscriptBuffer = `${currentInputTranscriptBuffer} ${incomingChunk}`.trim();
+              if (!isDeveloperVerified && verifyDeveloperCode(currentInputTranscriptBuffer)) {
+                promoteDeveloperRespectMode(activeSession);
+              }
               sendJson(clientWs, {
                 type: 'input_transcript',
-                text: serverContent.inputTranscription.text,
+                text: incomingChunk,
               });
             }
 
             if (serverContent?.outputTranscription?.text) {
+              const outChunk = serverContent.outputTranscription.text;
+              currentOutputTranscriptBuffer = `${currentOutputTranscriptBuffer} ${outChunk}`.trim();
               sendJson(clientWs, {
                 type: 'output_transcript',
-                text: serverContent.outputTranscription.text,
+                text: outChunk,
               });
             }
 
@@ -379,6 +430,7 @@ async function startServer() {
           mode: activeMode,
           model,
           voice,
+          developerVerified: isDeveloperVerified,
         });
 
         if (isModeSwitch && activeMode === 'badmash') {
@@ -453,8 +505,16 @@ async function startServer() {
       }
 
       if (msg.type === 'text' && typeof msg.text === 'string' && msg.text.trim().length > 0) {
+        const cleanedText = msg.text.trim();
         try {
-          activeSession.sendRealtimeInput({ text: msg.text.trim() });
+          if (!isDeveloperVerified && verifyDeveloperCode(cleanedText)) {
+            promoteDeveloperRespectMode(activeSession);
+            activeSession.sendRealtimeInput({
+              text: `${COSMIC_DEVELOPER_RESPECT_NOTICE}\nDeveloper message: ${cleanedText}`,
+            });
+          } else {
+            activeSession.sendRealtimeInput({ text: cleanedText });
+          }
         } catch (err) {
           console.error('[Cosmic Live] Failed forwarding text input:', err);
         }

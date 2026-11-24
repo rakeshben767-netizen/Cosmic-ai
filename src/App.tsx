@@ -19,6 +19,7 @@ export default function App() {
     mode,
     cosmicState,
     isMicMuted,
+    isDeveloperVerified,
     errorMessage,
     micNotice,
     transcripts,
@@ -102,6 +103,16 @@ export default function App() {
           <span className="font-mono text-slate-400">
             {isBadmash ? 'Charon (Kadak)' : 'Voice (Zephyr)'}
           </span>
+          {isDeveloperVerified && (
+            <>
+              <span aria-hidden="true" className="text-slate-600">
+                ·
+              </span>
+              <span className="font-mono text-emerald-300" data-testid="respect-mode-label">
+                Respect Mode
+              </span>
+            </>
+          )}
         </div>
 
         <div className="pointer-events-auto flex items-center gap-1.5 shrink-0 sm:gap-2">
