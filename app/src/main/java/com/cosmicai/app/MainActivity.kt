@@ -42,17 +42,19 @@ class MainActivity : AppCompatActivity() {
         private const val UNITY_GAME_ID = "800426177"
         private const val UNITY_TEST_MODE = false
         private const val PLACEMENT_REWARDED_PRIMARY = "Rewarded_Android"
-        private const val PLACEMENT_REWARDED_ALT = "Rewarded_Androidd"
-        private val REWARDED_PLACEMENTS = listOf(
-            PLACEMENT_REWARDED_PRIMARY,
-            PLACEMENT_REWARDED_ALT
+        private val REWARDED_FALLBACK_PLACEMENTS = listOf(
+            "rewardedVideo",
+            "Rewarded_Androidd"
         )
+        private val ALL_REWARDED_PLACEMENTS = listOf(PLACEMENT_REWARDED_PRIMARY) + REWARDED_FALLBACK_PLACEMENTS
     }
 
     private lateinit var webView: WebView
     private var pendingWebPermissionRequest: PermissionRequest? = null
     private val readyPlacements = ConcurrentHashMap<String, Boolean>()
     private val loadingPlacements = ConcurrentHashMap<String, Boolean>()
+    private val placementErrors = ConcurrentHashMap<String, String>()
+    private val disabledPlacements = ConcurrentHashMap<String, Boolean>()
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile
     private var lastAdErrorReason: String = ""
@@ -217,7 +219,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun findReadyRewardedPlacement(): String? {
-        return REWARDED_PLACEMENTS.firstOrNull { readyPlacements[it] == true }
+        return ALL_REWARDED_PLACEMENTS.firstOrNull { readyPlacements[it] == true }
     }
 
     private fun initUnityAds() {
@@ -233,6 +235,8 @@ class MainActivity : AppCompatActivity() {
                 override fun onInitializationComplete() {
                     runOnUiThread {
                         lastAdErrorReason = ""
+                        placementErrors.clear()
+                        disabledPlacements.clear()
                         loadRewardedPlacements()
                     }
                 }
@@ -243,7 +247,7 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     val reason = "Unity init failed (${error?.name ?: "UNKNOWN"}): ${message ?: "check network/Game ID"}"
                     runOnUiThread {
-                        for (pid in REWARDED_PLACEMENTS) {
+                        for (pid in ALL_REWARDED_PLACEMENTS) {
                             readyPlacements[pid] = false
                             loadingPlacements[pid] = false
                         }
@@ -261,9 +265,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadRewardedPlacements() {
-        for (pid in REWARDED_PLACEMENTS) {
-            loadPlacement(pid)
+        val activeFallback = REWARDED_FALLBACK_PLACEMENTS.firstOrNull { disabledPlacements[it] != true }
+        val candidate = if (disabledPlacements[PLACEMENT_REWARDED_PRIMARY] != true) {
+            PLACEMENT_REWARDED_PRIMARY
+        } else {
+            activeFallback ?: PLACEMENT_REWARDED_PRIMARY
         }
+        loadPlacement(candidate)
     }
 
     private fun loadPlacement(placementId: String) {
@@ -277,6 +285,8 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     loadingPlacements[targetPid] = false
                     readyPlacements[targetPid] = true
+                    disabledPlacements.remove(targetPid)
+                    placementErrors.remove(targetPid)
                     lastAdErrorReason = ""
                     val pendingCb = pendingShowCallbackId
                     if (pendingCb != null) {
@@ -295,28 +305,48 @@ class MainActivity : AppCompatActivity() {
             ) {
                 val targetPid = pid ?: placementId
                 val rawMsg = message ?: "no ad available right now"
-                val reason = if (rawMsg.contains("adMarkup", ignoreCase = true) ||
-                    rawMsg.contains("objectId", ignoreCase = true)
-                ) {
-                    "Unity Dashboard error ($targetPid is set to Bidding/Mediation). Create a non-bidding Waterfall placement named 'Rewarded_Android' in Unity Dashboard."
-                } else {
-                    "Unity ad failed [$targetPid] (${error?.name ?: "NO_FILL"}): $rawMsg"
+                val notConfigured = rawMsg.contains("No placement configured", ignoreCase = true)
+                val reason = when {
+                    rawMsg.contains("adMarkup", ignoreCase = true) ||
+                        rawMsg.contains("objectId", ignoreCase = true) ->
+                        "Unity project $UNITY_GAME_ID [$targetPid] is Bidding/Mediation. In Unity Dashboard select 'Only Unity Ads (No Mediation)' or send AdMob Rewarded ID."
+                    notConfigured ->
+                        "Unity placement '$targetPid' is not configured on Game ID $UNITY_GAME_ID."
+                    else ->
+                        "Unity ad failed [$targetPid] (${error?.name ?: "NO_FILL"}): $rawMsg"
                 }
+
                 runOnUiThread {
                     loadingPlacements[targetPid] = false
                     readyPlacements[targetPid] = false
-                    if (findReadyRewardedPlacement() == null) {
-                        lastAdErrorReason = reason
+                    placementErrors[targetPid] = reason
+                    if (notConfigured) {
+                        disabledPlacements[targetPid] = true
+                        val nextFallback = ALL_REWARDED_PLACEMENTS.firstOrNull {
+                            it != targetPid && disabledPlacements[it] != true
+                        }
+                        if (nextFallback != null) {
+                            loadPlacement(nextFallback)
+                            return@runOnUiThread
+                        }
                     }
-                    val anyOtherLoadingOrReady = REWARDED_PLACEMENTS.any {
+
+                    val primaryReason = placementErrors[PLACEMENT_REWARDED_PRIMARY] ?: reason
+                    if (findReadyRewardedPlacement() == null) {
+                        lastAdErrorReason = primaryReason
+                    }
+                    val anyOtherLoadingOrReady = ALL_REWARDED_PLACEMENTS.any {
                         readyPlacements[it] == true || loadingPlacements[it] == true
                     }
                     if (!anyOtherLoadingOrReady) {
-                        resolvePendingShowFailure(lastAdErrorReason.ifEmpty { reason })
+                        resolvePendingShowFailure(lastAdErrorReason.ifEmpty { primaryReason })
                     }
                     mainHandler.postDelayed({
                         if (!isDestroyed && UnityAds.isInitialized) {
-                            loadPlacement(targetPid)
+                            if (notConfigured) {
+                                disabledPlacements.clear()
+                            }
+                            loadRewardedPlacements()
                         }
                     }, 15000)
                 }
