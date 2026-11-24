@@ -94,13 +94,13 @@ export default function App() {
             ·
           </span>
           <span className="text-slate-200">
-            {isBadmash ? 'Purple Knight · Savage Mode' : 'Blue Knight · Normal Mode'}
+            {isBadmash ? 'Crimson Overlord · Badmash Mode' : 'Blue Knight · Normal Mode'}
           </span>
           <span aria-hidden="true" className="text-slate-600">
             ·
           </span>
           <span className="font-mono text-slate-400">
-            {isBadmash ? 'Don Voice (Charon)' : 'Voice (Zephyr)'}
+            {isBadmash ? 'Charon (Kadak)' : 'Voice (Zephyr)'}
           </span>
         </div>
 
@@ -288,7 +288,7 @@ export default function App() {
             data-testid="badmash-mode-toggle"
             className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold tracking-wide whitespace-nowrap transition-all duration-200 focus-visible:outline-2 focus-visible:outline-orange-400 ${
               isBadmash
-                ? 'border-orange-400/80 bg-gradient-to-r from-orange-600/35 to-purple-700/45 text-orange-100 shadow-[0_0_20px_rgba(249,115,22,0.45)]'
+                ? 'border-red-500/80 bg-gradient-to-r from-red-700/40 to-orange-600/35 text-orange-100 shadow-[0_0_20px_rgba(239,68,68,0.45)]'
                 : 'border-sky-400/30 bg-[#13192a] text-sky-200 hover:border-sky-400/50 hover:bg-[#192238]'
             }`}
           >

@@ -130,9 +130,10 @@ export function useCosmicLive() {
   const isMicMutedRef = useRef<boolean>(isMicMuted);
   const audioLevelRef = useRef<number>(0);
 
-  // Persistent single AudioContext + Badmash EQ -> GainNode -> Analyser -> destination
+  // Persistent single AudioContext + Badmash Kadak EQ -> Compressor -> GainNode -> Analyser -> destination
   const audioCtxRef = useRef<AudioContext | null>(null);
   const badmashBassFilterRef = useRef<BiquadFilterNode | null>(null);
+  const badmashPresenceFilterRef = useRef<BiquadFilterNode | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
   const outputAnalyserRef = useRef<AnalyserNode | null>(null);
 
@@ -152,9 +153,19 @@ export function useCosmicLive() {
   useEffect(() => {
     modeRef.current = mode;
     const bassFilter = badmashBassFilterRef.current;
+    const presenceFilter = badmashPresenceFilterRef.current;
+    const gainNode = masterGainRef.current;
     const ctx = audioCtxRef.current;
-    if (bassFilter && ctx && ctx.state !== 'closed') {
-      bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 4.5 : 0, ctx.currentTime, 0.06);
+    if (ctx && ctx.state !== 'closed') {
+      if (bassFilter) {
+        bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 5.2 : 0, ctx.currentTime, 0.06);
+      }
+      if (presenceFilter) {
+        presenceFilter.gain.setTargetAtTime(mode === 'badmash' ? 2.6 : 0, ctx.currentTime, 0.06);
+      }
+      if (gainNode) {
+        gainNode.gain.setTargetAtTime(mode === 'badmash' ? 1.06 : 1.0, ctx.currentTime, 0.06);
+      }
     }
   }, [mode]);
 
@@ -230,20 +241,36 @@ export function useCosmicLive() {
       const bassFilter = ctx.createBiquadFilter();
       bassFilter.type = 'lowshelf';
       bassFilter.frequency.value = 145;
-      bassFilter.gain.value = modeRef.current === 'badmash' ? 4.5 : 0;
+      bassFilter.gain.value = modeRef.current === 'badmash' ? 5.2 : 0;
+
+      const presenceFilter = ctx.createBiquadFilter();
+      presenceFilter.type = 'peaking';
+      presenceFilter.frequency.value = 2600;
+      presenceFilter.Q.value = 1.1;
+      presenceFilter.gain.value = modeRef.current === 'badmash' ? 2.6 : 0;
+
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -16;
+      compressor.knee.value = 12;
+      compressor.ratio.value = 3.2;
+      compressor.attack.value = 0.005;
+      compressor.release.value = 0.14;
 
       const gain = ctx.createGain();
-      gain.gain.value = 1.0;
+      gain.gain.value = modeRef.current === 'badmash' ? 1.06 : 1.0;
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
 
-      bassFilter.connect(gain);
+      bassFilter.connect(presenceFilter);
+      presenceFilter.connect(compressor);
+      compressor.connect(gain);
       gain.connect(analyser);
       analyser.connect(ctx.destination);
 
       audioCtxRef.current = ctx;
       badmashBassFilterRef.current = bassFilter;
+      badmashPresenceFilterRef.current = presenceFilter;
       masterGainRef.current = gain;
       outputAnalyserRef.current = analyser;
 
@@ -829,7 +856,7 @@ export function useCosmicLive() {
       'info',
       'gemini',
       next === 'badmash'
-        ? 'BADMASH MODE ON -> Switching to Purple Knight + Deep Don voice (Charon).'
+        ? 'BADMASH MODE ON -> Switching to Crimson Overlord + Crisp Charon voice.'
         : 'NORMAL MODE ON -> Switching to Blue Knight + Friendly voice (Zephyr).',
     );
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
