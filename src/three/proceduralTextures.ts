@@ -4,10 +4,11 @@ export interface ProceduralTextureSet {
   armorBump: THREE.CanvasTexture;
   armorRoughness: THREE.CanvasTexture;
   blueSwordEnergy: THREE.CanvasTexture;
-  crimsonSwordMagma: THREE.CanvasTexture;
+  purpleSwordLightning: THREE.CanvasTexture;
+  cosmicPortal: THREE.CanvasTexture;
   contactShadow: THREE.CanvasTexture;
   pedestalRuneBlue: THREE.CanvasTexture;
-  pedestalRuneCrimson: THREE.CanvasTexture;
+  pedestalRunePurple: THREE.CanvasTexture;
   dispose: () => void;
 }
 
@@ -95,56 +96,92 @@ export function createProceduralTextureSet(maxAnisotropy: number): ProceduralTex
   blueSwordEnergy.colorSpace = THREE.SRGBColorSpace;
   blueSwordEnergy.anisotropy = maxAnisotropy;
 
-  // 3. Crimson Obsidian-Edge Greatsword Texture (Blood-red edges & glowing core vein)
-  const [crimsonCanvas, crimsonCtx] = makeCanvas(256, 1024);
-  const crimsonGrad = crimsonCtx.createLinearGradient(0, 0, 256, 0);
-  crimsonGrad.addColorStop(0, '#ff1f2d');
-  crimsonGrad.addColorStop(0.11, '#7f0a12');
-  crimsonGrad.addColorStop(0.24, '#111218');
-  crimsonGrad.addColorStop(0.45, '#19090d');
-  crimsonGrad.addColorStop(0.5, '#ff1a2b');
-  crimsonGrad.addColorStop(0.55, '#19090d');
-  crimsonGrad.addColorStop(0.76, '#111218');
-  crimsonGrad.addColorStop(0.89, '#7f0a12');
-  crimsonGrad.addColorStop(1, '#ff1f2d');
-  crimsonCtx.fillStyle = crimsonGrad;
-  crimsonCtx.fillRect(0, 0, 256, 1024);
+  // 3. Purple Lightning Greatsword Core Texture (Crackling Violet Plasma)
+  const [purpleCanvas, purpleCtx] = makeCanvas(256, 1024);
+  const purpleGrad = purpleCtx.createLinearGradient(0, 0, 256, 0);
+  purpleGrad.addColorStop(0, '#2a2438');
+  purpleGrad.addColorStop(0.16, '#140f22');
+  purpleGrad.addColorStop(0.36, '#4c1d95');
+  purpleGrad.addColorStop(0.5, '#c084fc');
+  purpleGrad.addColorStop(0.64, '#4c1d95');
+  purpleGrad.addColorStop(0.84, '#140f22');
+  purpleGrad.addColorStop(1, '#2a2438');
+  purpleCtx.fillStyle = purpleGrad;
+  purpleCtx.fillRect(0, 0, 256, 1024);
 
-  // Razorsharp glowing blood-crimson blade bevels
-  crimsonCtx.strokeStyle = '#ff2a3c';
-  crimsonCtx.shadowColor = '#e11d48';
-  crimsonCtx.shadowBlur = 18;
-  crimsonCtx.lineWidth = 5;
-  crimsonCtx.strokeRect(14, 10, 228, 1004);
+  // Inner metallic purple bevel trim
+  purpleCtx.strokeStyle = '#a855f7';
+  purpleCtx.shadowColor = '#c084fc';
+  purpleCtx.shadowBlur = 16;
+  purpleCtx.lineWidth = 4;
+  purpleCtx.strokeRect(20, 12, 216, 1000);
 
-  // Jagged crimson magma vein & runic notches down the fuller
-  crimsonCtx.strokeStyle = '#ff4d5a';
-  crimsonCtx.lineWidth = 3.5;
-  crimsonCtx.beginPath();
-  crimsonCtx.moveTo(128, 18);
-  crimsonCtx.lineTo(128, 998);
-  crimsonCtx.stroke();
-
-  for (let y = 58; y < 950; y += 64) {
-    crimsonCtx.beginPath();
-    crimsonCtx.moveTo(128, y);
-    crimsonCtx.lineTo(68, y + 20);
-    crimsonCtx.moveTo(128, y);
-    crimsonCtx.lineTo(188, y + 20);
-    crimsonCtx.stroke();
-
-    crimsonCtx.fillStyle = '#ff9ca3';
-    crimsonCtx.beginPath();
-    crimsonCtx.arc(128, y, 4.2, 0, Math.PI * 2);
-    crimsonCtx.fill();
+  // Jagged branching electric violet lightning arc down the blade
+  purpleCtx.strokeStyle = '#f5d0fe';
+  purpleCtx.shadowColor = '#d946ef';
+  purpleCtx.shadowBlur = 18;
+  purpleCtx.lineWidth = 3.5;
+  purpleCtx.beginPath();
+  let lx = 128;
+  purpleCtx.moveTo(lx, 18);
+  for (let y = 42; y <= 996; y += 26) {
+    lx = 128 + Math.sin(y * 0.13) * 26 + ((y * 7) % 19) - 9;
+    purpleCtx.lineTo(lx, y);
   }
-  crimsonCtx.shadowBlur = 0;
+  purpleCtx.stroke();
 
-  const crimsonSwordMagma = new THREE.CanvasTexture(crimsonCanvas);
-  crimsonSwordMagma.colorSpace = THREE.SRGBColorSpace;
-  crimsonSwordMagma.anisotropy = maxAnisotropy;
+  purpleCtx.lineWidth = 1.8;
+  for (let y = 90; y < 940; y += 95) {
+    const startX = 128 + Math.sin(y * 0.13) * 20;
+    purpleCtx.beginPath();
+    purpleCtx.moveTo(startX, y);
+    purpleCtx.lineTo(startX - 42, y + 36);
+    purpleCtx.moveTo(startX, y + 18);
+    purpleCtx.lineTo(startX + 44, y + 52);
+    purpleCtx.stroke();
+  }
+  purpleCtx.shadowBlur = 0;
 
-  // 4. Soft Radial Contact Shadow
+  const purpleSwordLightning = new THREE.CanvasTexture(purpleCanvas);
+  purpleSwordLightning.colorSpace = THREE.SRGBColorSpace;
+  purpleSwordLightning.anisotropy = maxAnisotropy;
+
+  // 4. Cosmic Nebula Halo Portal Disc Texture
+  const [portalCanvas, portalCtx] = makeCanvas(512, 512);
+  const pGrad = portalCtx.createRadialGradient(256, 256, 20, 256, 256, 250);
+  pGrad.addColorStop(0, 'rgba(20, 10, 42, 0.92)');
+  pGrad.addColorStop(0.45, 'rgba(67, 20, 118, 0.85)');
+  pGrad.addColorStop(0.78, 'rgba(147, 51, 234, 0.78)');
+  pGrad.addColorStop(0.95, 'rgba(192, 132, 252, 0.92)');
+  pGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
+  portalCtx.fillStyle = pGrad;
+  portalCtx.fillRect(0, 0, 512, 512);
+
+  // Swirling cosmic nebula dust streaks
+  for (let i = 0; i < 65; i++) {
+    const angle = (i * 0.42) % (Math.PI * 2);
+    const radius = 52 + ((i * 29) % 185);
+    const px = 256 + Math.cos(angle) * radius;
+    const py = 256 + Math.sin(angle) * radius;
+    const starSize = i % 7 === 0 ? 3.2 : 1.5;
+    portalCtx.fillStyle = i % 5 === 0 ? '#f5d0fe' : 'rgba(216, 180, 254, 0.78)';
+    portalCtx.beginPath();
+    portalCtx.arc(px, py, starSize, 0, Math.PI * 2);
+    portalCtx.fill();
+  }
+
+  // Subtle violet cosmic ring glow
+  portalCtx.strokeStyle = 'rgba(217, 70, 239, 0.45)';
+  portalCtx.lineWidth = 4;
+  portalCtx.beginPath();
+  portalCtx.arc(256, 256, 214, 0, Math.PI * 2);
+  portalCtx.stroke();
+
+  const cosmicPortal = new THREE.CanvasTexture(portalCanvas);
+  cosmicPortal.colorSpace = THREE.SRGBColorSpace;
+  cosmicPortal.anisotropy = maxAnisotropy;
+
+  // 5. Soft Radial Contact Shadow
   const [shadowCanvas, shadowCtx] = makeCanvas(256, 256);
   const shGrad = shadowCtx.createRadialGradient(128, 128, 10, 128, 128, 126);
   shGrad.addColorStop(0, 'rgba(0, 0, 0, 0.84)');
@@ -154,7 +191,7 @@ export function createProceduralTextureSet(maxAnisotropy: number): ProceduralTex
   shadowCtx.fillRect(0, 0, 256, 256);
   const contactShadow = new THREE.CanvasTexture(shadowCanvas);
 
-  // 5. Pedestal Rune Discs (Blue & Crimson)
+  // 6. Pedestal Rune Discs (Blue & Purple)
   const makeRuneTexture = (primary: string, glow: string): THREE.CanvasTexture => {
     const [c, ctx] = makeCanvas(512, 512);
     ctx.fillStyle = '#0d1018';
@@ -193,24 +230,26 @@ export function createProceduralTextureSet(maxAnisotropy: number): ProceduralTex
   };
 
   const pedestalRuneBlue = makeRuneTexture('rgba(56, 189, 248, 0.72)', '#0ea5e9');
-  const pedestalRuneCrimson = makeRuneTexture('rgba(255, 86, 40, 0.85)', '#ff3b10');
+  const pedestalRunePurple = makeRuneTexture('rgba(168, 85, 247, 0.85)', '#9333ea');
 
   return {
     armorBump,
     armorRoughness,
     blueSwordEnergy,
-    crimsonSwordMagma,
+    purpleSwordLightning,
+    cosmicPortal,
     contactShadow,
     pedestalRuneBlue,
-    pedestalRuneCrimson,
+    pedestalRunePurple,
     dispose: () => {
       armorBump.dispose();
       armorRoughness.dispose();
       blueSwordEnergy.dispose();
-      crimsonSwordMagma.dispose();
+      purpleSwordLightning.dispose();
+      cosmicPortal.dispose();
       contactShadow.dispose();
       pedestalRuneBlue.dispose();
-      pedestalRuneCrimson.dispose();
+      pedestalRunePurple.dispose();
     },
   };
 }

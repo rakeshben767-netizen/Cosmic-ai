@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { CosmicMode, CosmicState } from '../types/cosmic.ts';
 import {
   createBlueKnightRig,
-  createCrimsonOverlordRig,
+  createPurpleKnightRig,
   type KnightRigHandle,
 } from '../three/knightModels.ts';
 import { createProceduralTextureSet } from '../three/proceduralTextures.ts';
@@ -113,7 +113,7 @@ export function CosmicKnightCanvas({
 
     const scene = new THREE.Scene();
     const normalBgColor = new THREE.Color(0x0d101b);
-    const badmashBgColor = new THREE.Color(0x140a0c);
+    const badmashBgColor = new THREE.Color(0x100b1e);
     const activeBgColor = normalBgColor.clone();
     scene.background = activeBgColor;
     scene.fog = new THREE.FogExp2(activeBgColor.getHex(), 0.092);
@@ -230,7 +230,7 @@ export function CosmicKnightCanvas({
     // Transition Portal Shockwave Ring
     const shockwaveGeo = new THREE.TorusGeometry(1.1, 0.025, 10, 48);
     const shockwaveMat = new THREE.MeshBasicMaterial({
-      color: 0xff4518,
+      color: 0xa855f7,
       transparent: true,
       opacity: 0,
       depthWrite: false,
@@ -242,14 +242,14 @@ export function CosmicKnightCanvas({
 
     // Build BOTH Knights once so switching modes is instantaneous & zero-stutter
     const blueKnight: KnightRigHandle = createBlueKnightRig(textures, !isSoftwareGl);
-    const crimsonKnight: KnightRigHandle = createCrimsonOverlordRig(textures, !isSoftwareGl);
+    const purpleKnight: KnightRigHandle = createPurpleKnightRig(textures, !isSoftwareGl);
     scene.add(blueKnight.root);
-    scene.add(crimsonKnight.root);
+    scene.add(purpleKnight.root);
 
     const applyInitialVisibility = () => {
       const isBadmash = modeRef.current === 'badmash';
       blueKnight.root.visible = !isBadmash;
-      crimsonKnight.root.visible = isBadmash;
+      purpleKnight.root.visible = isBadmash;
     };
     applyInitialVisibility();
 
@@ -294,9 +294,9 @@ export function CosmicKnightCanvas({
 
     // Pre-allocated scratch helpers (zero GC inside animation loop)
     const normalRimColor = new THREE.Color(0x38bdf8);
-    const badmashRimColor = new THREE.Color(0xff1e2d);
-    const badmashEmberColor = new THREE.Color(0xe11d48);
-    const badmashAuraBase = new THREE.Color(0xdc2626);
+    const badmashRimColor = new THREE.Color(0xa855f7);
+    const badmashEmberColor = new THREE.Color(0xc084fc);
+    const badmashAuraBase = new THREE.Color(0x9333ea);
     const normalAuraBase = new THREE.Color(0x22d3ee);
     const normalParticleColor = new THREE.Color(0x38bdf8);
     const errorColor = new THREE.Color(0xef4444);
@@ -345,14 +345,14 @@ export function CosmicKnightCanvas({
       const isBadmash = modeRef.current === 'badmash';
       const currentState = stateRef.current;
 
-      // Instant mode switch (Blue Knight <-> Crimson Shadow Knight)
+      // Instant mode switch (Blue Knight <-> Purple Knight)
       if (lastPaintedMode !== modeRef.current) {
         lastPaintedMode = modeRef.current;
         blueKnight.root.visible = !isBadmash;
-        crimsonKnight.root.visible = isBadmash;
-        runeTopMat.map = isBadmash ? textures.pedestalRuneCrimson : textures.pedestalRuneBlue;
+        purpleKnight.root.visible = isBadmash;
+        runeTopMat.map = isBadmash ? textures.pedestalRunePurple : textures.pedestalRuneBlue;
         runeTopMat.emissiveMap = runeTopMat.map;
-        runeTopMat.emissive.setHex(isBadmash ? 0xe11d48 : 0x0284c7);
+        runeTopMat.emissive.setHex(isBadmash ? 0x7c3aed : 0x0284c7);
         runeTopMat.needsUpdate = true;
       }
 
@@ -390,7 +390,7 @@ export function CosmicKnightCanvas({
         const progress = 1 - transitionPulseRef.current;
         shockwaveMesh.scale.setScalar(0.8 + progress * 1.25);
         shockwaveMesh.position.y = 0.08 + progress * 1.35;
-        shockwaveMat.color.setHex(isBadmash ? 0xff1e2d : 0x38bdf8);
+        shockwaveMat.color.setHex(isBadmash ? 0xa855f7 : 0x38bdf8);
         shockwaveMat.opacity = transitionPulseRef.current * 0.8;
       } else {
         transitionPulseRef.current = 0;
@@ -398,11 +398,19 @@ export function CosmicKnightCanvas({
       }
 
       // Animate Active Knight Rig
-      const activeRig = isBadmash ? crimsonKnight : blueKnight;
+      const activeRig = isBadmash ? purpleKnight : blueKnight;
       const breathAmp = currentState === 'SPEAKING' ? 0.018 + smoothedAudio * 0.02 : 0.012;
       const breathFreq = currentState === 'SPEAKING' ? 4.2 : 1.9;
       activeRig.upperBody.position.y =
         activeRig.upperBodyBaseY + Math.sin(elapsed * breathFreq) * breathAmp;
+
+      // Cosmic portal halo animation (Purple Knight)
+      if (activeRig.haloRing) {
+        activeRig.haloRing.rotation.z = elapsed * (currentState === 'SPEAKING' ? 0.42 : 0.16);
+      }
+      if (activeRig.haloPortal) {
+        activeRig.haloPortal.rotation.z = -elapsed * 0.1;
+      }
 
       // Dynamic heroic standing combat posture
       if (currentState === 'SPEAKING') {
@@ -440,7 +448,7 @@ export function CosmicKnightCanvas({
         frond.rotation.x = 0.24 + Math.sin(elapsed * 2.1 + i * 0.8) * 0.04 * capeEnergy;
       }
 
-      // Voice-reactive emissive glow on chest crack, eyes & sword
+      // Voice-reactive emissive glow on crystals, eyes, halo & sword
       const glowMult =
         currentState === 'SPEAKING'
           ? (isBadmash ? 1.42 : 1.18) + smoothedAudio * (isBadmash ? 1.45 : 1.15)
@@ -507,7 +515,7 @@ export function CosmicKnightCanvas({
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
 
       blueKnight.dispose();
-      crimsonKnight.dispose();
+      purpleKnight.dispose();
       textures.dispose();
       floorGeo.dispose();
       floorMat.dispose();
@@ -533,7 +541,7 @@ export function CosmicKnightCanvas({
   if (webglUnavailable || contextLost) {
     const fallbackSrc =
       mode === 'badmash'
-        ? '/assets/aistudio/IMG_20261124_194857_497901a7.jpg'
+        ? '/assets/aistudio/IMG_20261122_150443_2bf25043.jpg'
         : '/assets/aistudio/IMG_20261122_150432_29af8877.jpg';
     return (
       <div
@@ -542,7 +550,7 @@ export function CosmicKnightCanvas({
       >
         <img
           src={fallbackSrc}
-          alt={mode === 'badmash' ? 'Cosmic AI Crimson Knight' : 'Cosmic AI Blue Knight'}
+          alt={mode === 'badmash' ? 'Cosmic AI Purple Knight' : 'Cosmic AI Blue Knight'}
           referrerPolicy="no-referrer"
           className="h-full max-h-[82vh] w-auto object-contain"
         />
@@ -555,7 +563,7 @@ export function CosmicKnightCanvas({
       ref={containerRef}
       className="h-full w-full touch-none select-none"
       data-testid="cosmic-3d-stage"
-      data-knight={mode === 'badmash' ? 'crimson-knight' : 'blue-knight'}
+      data-knight={mode === 'badmash' ? 'purple-knight' : 'blue-knight'}
     />
   );
 }

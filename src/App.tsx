@@ -80,7 +80,7 @@ export default function App() {
                 ? 'text-red-400'
                 : cosmicState === 'SPEAKING'
                   ? isBadmash
-                    ? 'text-orange-400'
+                    ? 'text-fuchsia-300'
                     : 'text-sky-300'
                   : cosmicState === 'LISTENING'
                     ? isBadmash
@@ -95,7 +95,7 @@ export default function App() {
             ·
           </span>
           <span className="text-slate-200">
-            {isBadmash ? 'Crimson Knight · Badmash Mode' : 'Blue Knight · Normal Mode'}
+            {isBadmash ? 'Purple Knight · Badmash Mode' : 'Blue Knight · Normal Mode'}
           </span>
           <span aria-hidden="true" className="text-slate-600">
             ·
@@ -233,7 +233,7 @@ export default function App() {
         <div
           className={`pointer-events-auto flex flex-wrap items-center justify-center gap-2 rounded-2xl border px-3 py-2.5 shadow-2xl transition-colors duration-200 sm:flex-nowrap sm:gap-3 sm:px-4 ${
             isBadmash
-              ? 'border-orange-500/45 bg-[#160e1c]/95 shadow-[0_0_28px_rgba(234,88,12,0.28)]'
+              ? 'border-purple-400/45 bg-[#150d22]/95 shadow-[0_0_28px_rgba(168,85,247,0.3)]'
               : 'border-sky-400/30 bg-[#0d111d]/95 shadow-[0_0_24px_rgba(14,165,233,0.18)]'
           }`}
           data-testid="cosmic-control-dock"
@@ -246,7 +246,7 @@ export default function App() {
             className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-sky-400 ${
               isLive
                 ? isBadmash
-                  ? 'border-orange-400/60 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30'
+                  ? 'border-purple-400/60 bg-purple-600/25 text-purple-100 hover:bg-purple-600/35'
                   : 'border-sky-400/60 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30'
                 : 'border-white/15 bg-white/8 text-slate-100 hover:bg-white/15'
             }`}
@@ -297,15 +297,15 @@ export default function App() {
             aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
             onClick={() => toggleBadmashMode()}
             data-testid="badmash-mode-toggle"
-            className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold tracking-wide whitespace-nowrap transition-all duration-200 focus-visible:outline-2 focus-visible:outline-orange-400 ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold tracking-wide whitespace-nowrap transition-all duration-200 focus-visible:outline-2 focus-visible:outline-purple-400 ${
               isBadmash
-                ? 'border-red-500/80 bg-gradient-to-r from-red-700/40 to-orange-600/35 text-orange-100 shadow-[0_0_20px_rgba(239,68,68,0.45)]'
+                ? 'border-purple-400/80 bg-gradient-to-r from-purple-700/45 to-fuchsia-600/35 text-purple-100 shadow-[0_0_20px_rgba(168,85,247,0.45)]'
                 : 'border-sky-400/30 bg-[#13192a] text-sky-200 hover:border-sky-400/50 hover:bg-[#192238]'
             }`}
           >
             {isBadmash ? (
               <>
-                <Flame className="h-4 w-4 text-orange-400" />
+                <Flame className="h-4 w-4 text-purple-300" />
                 <span>BADMASH MODE</span>
               </>
             ) : (
