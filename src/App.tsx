@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react';
 import {
+  ExternalLink,
   Flame,
+  Globe,
   Mic,
   MicOff,
   Power,
   RotateCcw,
   Send,
+  Settings2,
   ShieldCheck,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
+import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
 
@@ -20,16 +25,29 @@ export default function App() {
     cosmicState,
     isMicMuted,
     isDeveloperVerified,
+    features,
     errorMessage,
     micNotice,
+    backendUrl,
     transcripts,
+    actionLogs,
+    diagnosticLogs,
     diagnostics,
+    speakerTestResult,
+    liveKnowledge,
+    bridgeRuntime,
     audioLevelRef,
     togglePower,
     toggleMicMute,
     toggleBadmashMode,
+    updateFeatures,
+    runLiveKnowledgeSearch,
+    clearLiveKnowledge,
     retryMicrophone,
     sendTextMessage,
+    testSpeaker,
+    runManualSafeAction,
+    updateBackendUrl,
     clearError,
     clearMicNotice,
   } = useCosmicLive();
@@ -37,10 +55,14 @@ export default function App() {
   const [cameraResetTick, setCameraResetTick] = useState(0);
   const [fallbackDraft, setFallbackDraft] = useState('');
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const isBadmash = mode === 'badmash';
   const isLive =
-    cosmicState === 'CONNECTING' || cosmicState === 'LISTENING' || cosmicState === 'SPEAKING';
+    cosmicState === 'CONNECTING' ||
+    cosmicState === 'RECONNECTING' ||
+    cosmicState === 'LISTENING' ||
+    cosmicState === 'SPEAKING';
 
   useEffect(() => {
     document.body.dataset.cosmicState = cosmicState;
@@ -78,18 +100,22 @@ export default function App() {
             className={`font-mono font-semibold tracking-wider ${
               cosmicState === 'ERROR'
                 ? 'text-red-400'
-                : cosmicState === 'SPEAKING'
-                  ? isBadmash
-                    ? 'text-fuchsia-300'
-                    : 'text-sky-300'
-                  : cosmicState === 'LISTENING'
+                : cosmicState === 'RECONNECTING'
+                  ? 'text-amber-300'
+                  : cosmicState === 'SPEAKING'
                     ? isBadmash
-                      ? 'text-purple-300'
-                      : 'text-sky-400'
-                    : 'text-slate-300'
+                      ? 'text-fuchsia-300'
+                      : 'text-sky-300'
+                    : cosmicState === 'LISTENING'
+                      ? isBadmash
+                        ? 'text-purple-300'
+                        : 'text-sky-400'
+                      : 'text-slate-300'
             }`}
           >
-            {cosmicState}
+            {cosmicState === 'RECONNECTING'
+              ? `RECONNECTING (${diagnostics.retryCount})`
+              : cosmicState}
           </span>
           <span aria-hidden="true" className="text-slate-600">
             ·
@@ -116,6 +142,21 @@ export default function App() {
         </div>
 
         <div className="pointer-events-auto flex items-center gap-1.5 shrink-0 sm:gap-2">
+          {/* Settings, Optional Features & Live Knowledge */}
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            data-testid="settings-features-button"
+            aria-label="Cosmic Settings and Optional Features"
+            title="Settings, Optional Features & Live News"
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-white/12 bg-[#0d101b]/90 px-2.5 text-xs font-semibold text-slate-200 transition-colors hover:border-white/25 hover:text-white sm:h-10 sm:px-3"
+          >
+            <Settings2
+              className={`h-4 w-4 ${isBadmash ? 'text-purple-400' : 'text-sky-400'}`}
+            />
+            <span className="hidden sm:inline">Settings</span>
+          </button>
+
           {/* Privacy Policy */}
           <button
             type="button"
@@ -142,9 +183,41 @@ export default function App() {
       </header>
 
       <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
+      <SettingsFeaturesModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        mode={mode}
+        cosmicState={cosmicState}
+        features={features}
+        diagnostics={diagnostics}
+        speakerTestResult={speakerTestResult}
+        liveKnowledge={liveKnowledge}
+        bridgeRuntime={bridgeRuntime}
+        backendUrl={backendUrl}
+        transcripts={transcripts}
+        actionLogs={actionLogs}
+        diagnosticLogs={diagnosticLogs}
+        onUpdateFeatures={updateFeatures}
+        onSearchKnowledge={runLiveKnowledgeSearch}
+        onTestSpeaker={testSpeaker}
+        onRunSafeAction={runManualSafeAction}
+        onUpdateBackendUrl={updateBackendUrl}
+      />
 
-      {/* Unified Bottom Stack: Alerts, Mic Fallback & Caption sit cleanly ABOVE Dock with zero overlap */}
+      {/* Unified Bottom Stack: Alerts, Live Knowledge Sources, Mic Fallback & Caption sit cleanly ABOVE Dock */}
       <div className="pointer-events-none fixed inset-x-0 bottom-3 z-20 flex flex-col items-center gap-2.5 px-3">
+        {cosmicState === 'RECONNECTING' && (
+          <div
+            role="status"
+            data-testid="reconnecting-banner"
+            className="pointer-events-auto flex w-full max-w-md items-center justify-between gap-2 rounded-lg border border-amber-400/45 bg-[#1b1409]/95 px-3.5 py-2 text-xs text-amber-100 shadow-lg"
+          >
+            <span>
+              Reconnecting voice session automatically (attempt {diagnostics.retryCount}/5)...
+            </span>
+          </div>
+        )}
+
         {errorMessage && (
           <div
             role="alert"
@@ -183,6 +256,42 @@ export default function App() {
               >
                 Hide
               </button>
+            </div>
+          </div>
+        )}
+
+        {liveKnowledge && liveKnowledge.items.length > 0 && (
+          <div
+            data-testid="live-knowledge-card"
+            className="pointer-events-auto w-full max-w-xl rounded-xl border border-sky-400/30 bg-[#0d101b]/95 px-3.5 py-2.5 text-xs shadow-xl"
+          >
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 font-semibold text-sky-300">
+                <Globe className="h-3.5 w-3.5" />
+                Live Grounded Sources ({liveKnowledge.items[0].dateLabel})
+              </span>
+              <button
+                type="button"
+                onClick={clearLiveKnowledge}
+                aria-label="Dismiss live sources"
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {liveKnowledge.items.slice(0, 3).map((item, idx) => (
+                <a
+                  key={`${item.url}-${idx}`}
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex max-w-full items-center gap-1.5 truncate rounded-md border border-white/12 bg-[#14192b] px-2.5 py-1 text-[11px] text-slate-200 hover:border-sky-400/50 hover:text-white"
+                >
+                  <span className="truncate">{item.source}: {item.headline}</span>
+                  <ExternalLink className="h-3 w-3 shrink-0 text-sky-400" />
+                </a>
+              ))}
             </div>
           </div>
         )}
@@ -245,9 +354,11 @@ export default function App() {
             aria-label={isLive ? 'Power off Cosmic AI' : 'Power on Cosmic AI'}
             className={`flex min-h-11 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-sky-400 ${
               isLive
-                ? isBadmash
-                  ? 'border-purple-400/60 bg-purple-600/25 text-purple-100 hover:bg-purple-600/35'
-                  : 'border-sky-400/60 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30'
+                ? cosmicState === 'RECONNECTING'
+                  ? 'border-amber-400/60 bg-amber-500/20 text-amber-100 hover:bg-amber-500/30'
+                  : isBadmash
+                    ? 'border-purple-400/60 bg-purple-600/25 text-purple-100 hover:bg-purple-600/35'
+                    : 'border-sky-400/60 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30'
                 : 'border-white/15 bg-white/8 text-slate-100 hover:bg-white/15'
             }`}
           >
@@ -255,9 +366,11 @@ export default function App() {
             <span>
               {cosmicState === 'CONNECTING'
                 ? 'Connecting...'
-                : isLive
-                  ? 'Power Off'
-                  : 'Power On'}
+                : cosmicState === 'RECONNECTING'
+                  ? 'Reconnecting...'
+                  : isLive
+                    ? 'Power Off'
+                    : 'Power On'}
             </span>
           </button>
 
@@ -283,7 +396,15 @@ export default function App() {
             }`}
           >
             {isMicMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-            <span>{!isLive ? 'Speak' : isMicMuted ? 'Muted' : 'Listening'}</span>
+            <span>
+              {!isLive
+                ? 'Speak'
+                : isMicMuted
+                  ? 'Muted'
+                  : cosmicState === 'RECONNECTING'
+                    ? 'Resuming'
+                    : 'Listening'}
+            </span>
           </button>
 
           {/* Live Voice Waveform */}

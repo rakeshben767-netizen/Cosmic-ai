@@ -175,6 +175,33 @@ export function DiagnosticsDrawer({
                 <dt className="text-slate-400">Chunks Played</dt>
                 <dd className="text-right text-slate-100">{diagnostics.chunksPlayed}</dd>
 
+                <dt className="text-slate-400">Network</dt>
+                <dd className="text-right text-slate-100">{diagnostics.networkStatus}</dd>
+
+                <dt className="text-slate-400">Session Resumption</dt>
+                <dd className="text-right text-emerald-300">
+                  {diagnostics.sessionResumptionStatus}
+                </dd>
+
+                <dt className="text-slate-400">Reconnect Retries</dt>
+                <dd className="text-right text-slate-100">{diagnostics.retryCount}</dd>
+
+                <dt className="text-slate-400">Backend Latency</dt>
+                <dd className="text-right text-slate-100">
+                  {diagnostics.backendLatencyMs !== null
+                    ? `${diagnostics.backendLatencyMs}ms`
+                    : '—'}
+                </dd>
+
+                <dt className="text-slate-400">Last Close Code</dt>
+                <dd className="truncate text-right text-slate-100">
+                  {diagnostics.lastCloseCode !== null
+                    ? `${diagnostics.lastCloseCode}${
+                        diagnostics.lastCloseReason ? ` (${diagnostics.lastCloseReason})` : ''
+                      }`
+                    : '—'}
+                </dd>
+
                 <dt className="text-slate-400">Last MIME Type</dt>
                 <dd className="truncate text-right text-slate-100">{diagnostics.lastMimeType}</dd>
               </dl>

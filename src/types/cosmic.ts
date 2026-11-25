@@ -1,6 +1,45 @@
-export type CosmicState = 'IDLE' | 'CONNECTING' | 'LISTENING' | 'SPEAKING' | 'ERROR';
+export type CosmicState =
+  | 'IDLE'
+  | 'CONNECTING'
+  | 'RECONNECTING'
+  | 'LISTENING'
+  | 'SPEAKING'
+  | 'ERROR';
 
 export type CosmicMode = 'normal' | 'badmash';
+
+export type RapBattleStyle =
+  | 'friendly'
+  | 'comedy'
+  | 'tapori'
+  | 'attitude'
+  | 'freestyle';
+
+export interface CosmicFeaturesConfig {
+  customShayari: boolean;
+  rapBattle: boolean;
+  rapBattleStyle: RapBattleStyle;
+  roastBattle: boolean;
+  darkComedy: boolean;
+  doubleMeaning: boolean;
+  memeCommentary: boolean;
+  motivationalTapori: boolean;
+  newsCommentary: boolean;
+  customSlang: boolean;
+}
+
+export const DEFAULT_COSMIC_FEATURES: CosmicFeaturesConfig = {
+  customShayari: true,
+  rapBattle: true,
+  rapBattleStyle: 'tapori',
+  roastBattle: true,
+  darkComedy: true,
+  doubleMeaning: true,
+  memeCommentary: true,
+  motivationalTapori: true,
+  newsCommentary: true,
+  customSlang: true,
+};
 
 export type SafeActionName =
   | 'openWhatsApp'
@@ -37,7 +76,9 @@ export interface DiagnosticLogEntry {
     | 'audio'
     | 'playback'
     | 'tool'
-    | 'bridge';
+    | 'bridge'
+    | 'knowledge'
+    | 'network';
   message: string;
   timestamp: number;
 }
@@ -54,6 +95,30 @@ export interface ToolResponsePayload {
   response: Record<string, unknown>;
 }
 
+export interface LiveKnowledgeItem {
+  headline: string;
+  source: string;
+  url: string;
+  publishedAt: string | null;
+  dateLabel: string;
+  snippet: string;
+  relevanceScore: number;
+  corroboratedBy: number;
+}
+
+export interface LiveKnowledgeSearchResult {
+  ok: boolean;
+  query: string;
+  category: string;
+  fetchedAt: string;
+  offline: boolean;
+  cached?: boolean;
+  summary: string;
+  items: LiveKnowledgeItem[];
+  sources: Array<{ title: string; url: string; source: string; dateLabel: string }>;
+  error?: string;
+}
+
 export interface AudioDiagnosticsSnapshot {
   contextState: AudioContextState | 'uninitialized';
   sampleRate: number;
@@ -65,4 +130,10 @@ export interface AudioDiagnosticsSnapshot {
   lastMimeType: string;
   activeModel: string;
   activeVoice: string;
+  networkStatus: 'online' | 'offline';
+  retryCount: number;
+  sessionResumptionStatus: 'none' | 'ready' | 'resumed' | 'reconnecting' | 'expired';
+  lastCloseCode: number | null;
+  lastCloseReason: string | null;
+  backendLatencyMs: number | null;
 }

@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  ActionLogEntry,
-  AudioDiagnosticsSnapshot,
-  CosmicMode,
-  CosmicState,
-  DiagnosticLogEntry,
-  ToolCallPayload,
-  ToolResponsePayload,
-  TranscriptEntry,
+import {
+  DEFAULT_COSMIC_FEATURES,
+  type ActionLogEntry,
+  type AudioDiagnosticsSnapshot,
+  type CosmicFeaturesConfig,
+  type CosmicMode,
+  type CosmicState,
+  type DiagnosticLogEntry,
+  type LiveKnowledgeSearchResult,
+  type ToolCallPayload,
+  type ToolResponsePayload,
+  type TranscriptEntry,
 } from '../types/cosmic.ts';
 import {
   base64ToUint8,
@@ -20,6 +23,13 @@ import {
 } from '../utils/pcmAudio.ts';
 import { executeSafeToolCall } from '../utils/safeActions.ts';
 import { detectBridgeEnvironment, getCosmicNativeBridge } from '../utils/androidBridge.ts';
+import {
+  computeReconnectDelayMs,
+  formatConnectionFailureReason,
+  MAX_AUTO_RECONNECT_ATTEMPTS,
+  probeVoiceBackendHealth,
+  shouldAutoReconnect,
+} from '../utils/connectionManager.ts';
 
 const WORKLET_PROCESSOR_CODE = `
 class CosmicMicProcessor extends AudioWorkletProcessor {
@@ -39,6 +49,8 @@ interface ServerWsMessage {
     | 'connected'
     | 'mode_updated'
     | 'developer_verified'
+    | 'session_resumption'
+    | 'go_away'
     | 'disconnected'
     | 'session_closed'
     | 'audio'
@@ -47,19 +59,31 @@ interface ServerWsMessage {
     | 'input_transcript'
     | 'output_transcript'
     | 'tool_call'
+    | 'knowledge_sources'
+    | 'pong'
     | 'error';
   mode?: CosmicMode;
   model?: string;
   voice?: string;
+  resumed?: boolean;
+  autoResumed?: boolean;
+  elapsedMs?: number;
+  resumeHandle?: string | null;
+  handle?: string | null;
+  resumable?: boolean;
+  timeLeft?: string;
   developerVerified?: boolean;
   verified?: boolean;
   data?: string;
   mimeType?: string;
   text?: string;
+  closeCode?: number | null;
   reason?: string;
   code?: string;
+  retryable?: boolean;
   message?: string;
   calls?: ToolCallPayload[];
+  result?: LiveKnowledgeSearchResult;
 }
 
 function buildVoiceTextureCurve(roughnessMix: number): Float32Array<ArrayBuffer> {
@@ -68,7 +92,6 @@ function buildVoiceTextureCurve(roughnessMix: number): Float32Array<ArrayBuffer>
   const curve = new Float32Array(buffer);
   for (let i = 0; i < samples; i++) {
     const x = (i * 2) / (samples - 1) - 1;
-    // Gentle warm husky saturation (~5% mix in Badmash mode, exact identity in Normal mode)
     const warm = Math.tanh(2.2 * x) / Math.tanh(2.2);
     curve[i] = (1 - roughnessMix) * x + roughnessMix * warm;
   }
@@ -82,6 +105,7 @@ const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
   'https://cosmic-ai-2.ai.studio';
 const BACKEND_STORAGE_KEY = 'cosmic_backend_url';
+const FEATURES_STORAGE_KEY = 'cosmic_features_v1';
 
 function isPackagedApkOrigin(): boolean {
   if (typeof window === 'undefined') return false;
@@ -106,6 +130,29 @@ function getInitialBackendUrl(): string {
   return isPackagedApkOrigin() ? DEFAULT_ANDROID_BACKEND_URL : '';
 }
 
+function getInitialFeatures(): CosmicFeaturesConfig {
+  if (typeof window === 'undefined') return { ...DEFAULT_COSMIC_FEATURES };
+  try {
+    const raw = window.localStorage.getItem(FEATURES_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_COSMIC_FEATURES };
+    const parsed = JSON.parse(raw) as Partial<CosmicFeaturesConfig>;
+    return { ...DEFAULT_COSMIC_FEATURES, ...parsed };
+  } catch {
+    return { ...DEFAULT_COSMIC_FEATURES };
+  }
+}
+
+export function resolveHttpBaseUrl(customBackendUrl: string): string {
+  const trimmed = customBackendUrl.trim().replace(/\/+$/, '');
+  if (trimmed && /^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  if (isPackagedApkOrigin()) {
+    return DEFAULT_ANDROID_BACKEND_URL.replace(/\/+$/, '');
+  }
+  return '';
+}
+
 export function resolveLiveWsUrl(customBackendUrl: string): string {
   const trimmed = customBackendUrl.trim().replace(/\/+$/, '');
   if (trimmed && /^https?:\/\//i.test(trimmed)) {
@@ -125,6 +172,7 @@ export function useCosmicLive() {
   const [cosmicState, setCosmicState] = useState<CosmicState>('IDLE');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
   const [isDeveloperVerified, setIsDeveloperVerified] = useState<boolean>(false);
+  const [features, setFeatures] = useState<CosmicFeaturesConfig>(() => getInitialFeatures());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [micNotice, setMicNotice] = useState<string | null>(null);
   const [backendUrl, setBackendUrlState] = useState<string>(() => getInitialBackendUrl());
@@ -132,6 +180,7 @@ export function useCosmicLive() {
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
   const [speakerTestResult, setSpeakerTestResult] = useState<string | null>(null);
+  const [liveKnowledge, setLiveKnowledge] = useState<LiveKnowledgeSearchResult | null>(null);
   const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
     contextState: 'uninitialized',
     sampleRate: 0,
@@ -143,11 +192,20 @@ export function useCosmicLive() {
     lastMimeType: 'none',
     activeModel: 'standby',
     activeVoice: 'Zephyr',
+    networkStatus:
+      typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'online',
+    retryCount: 0,
+    sessionResumptionStatus: 'none',
+    lastCloseCode: null,
+    lastCloseReason: null,
+    backendLatencyMs: null,
   }));
 
   const modeRef = useRef<CosmicMode>(mode);
   const stateRef = useRef<CosmicState>(cosmicState);
   const isMicMutedRef = useRef<boolean>(isMicMuted);
+  const featuresRef = useRef<CosmicFeaturesConfig>(features);
+  const backendUrlRef = useRef<string>(backendUrl);
   const audioLevelRef = useRef<number>(0);
 
   // Persistent single AudioContext + Badmash Husky/Bass EQ -> Compressor -> GainNode -> Analyser -> destination
@@ -164,10 +222,20 @@ export function useCosmicLive() {
   const micProcessorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const micSilenceGainRef = useRef<GainNode | null>(null);
 
-  // Playback queue & Bridge runtime
+  // Connection lifecycle & Gemini Live resumption refs
   const nextStartTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
+  const isSessionReadyRef = useRef<boolean>(false);
+  const userWantsLiveRef = useRef<boolean>(false);
+  const resumeHandleRef = useRef<string | null>(null);
+  const retryCountRef = useRef<number>(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const handshakeTimerRef = useRef<number | null>(null);
+  const pingIntervalRef = useRef<number | null>(null);
+  const connectAttemptFnRef = useRef<((isRetry: boolean) => Promise<void>) | null>(null);
+  const lastHealthErrorRef = useRef<string | null>(null);
+
   const meterTimerRef = useRef<number | null>(null);
   const bridgeEnv = useRef(detectBridgeEnvironment());
 
@@ -202,6 +270,14 @@ export function useCosmicLive() {
     isMicMutedRef.current = isMicMuted;
   }, [isMicMuted]);
 
+  useEffect(() => {
+    featuresRef.current = features;
+  }, [features]);
+
+  useEffect(() => {
+    backendUrlRef.current = backendUrl;
+  }, [backendUrl]);
+
   const addLog = useCallback(
     (
       level: DiagnosticLogEntry['level'],
@@ -222,7 +298,7 @@ export function useCosmicLive() {
       } else {
         console.info(`[COSMIC:${category}]`, message);
       }
-      setDiagnosticLogs((prev) => [entry, ...prev].slice(0, 60));
+      setDiagnosticLogs((prev) => [entry, ...prev].slice(0, 80));
     },
     [],
   );
@@ -233,7 +309,6 @@ export function useCosmicLive() {
       if (!trimmed) return;
       setTranscripts((prev) => {
         const last = prev[prev.length - 1];
-        // Merge streaming incremental fragments from the same speaker within 3 seconds
         if (last && last.speaker === speaker && Date.now() - last.timestamp < 3000) {
           const merged = `${last.text} ${trimmed}`.replace(/\s+/g, ' ').trim();
           return [
@@ -242,7 +317,7 @@ export function useCosmicLive() {
           ];
         }
         return [
-          ...prev.slice(-19),
+          ...prev.slice(-24),
           {
             id: `tr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             speaker,
@@ -255,6 +330,21 @@ export function useCosmicLive() {
     },
     [],
   );
+
+  const clearReconnectTimers = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (handshakeTimerRef.current !== null) {
+      clearTimeout(handshakeTimerRef.current);
+      handshakeTimerRef.current = null;
+    }
+    if (pingIntervalRef.current !== null) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
+  }, []);
 
   const ensureAudioContext = useCallback(async (): Promise<AudioContext> => {
     let ctx = audioCtxRef.current;
@@ -404,7 +494,13 @@ export function useCosmicLive() {
             queuedChunks: activeSourcesRef.current.size,
           }));
           if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
-            setCosmicState(wsRef.current?.readyState === WebSocket.OPEN ? 'LISTENING' : 'IDLE');
+            setCosmicState(
+              wsRef.current?.readyState === WebSocket.OPEN && isSessionReadyRef.current
+                ? 'LISTENING'
+                : userWantsLiveRef.current
+                  ? 'RECONNECTING'
+                  : 'IDLE',
+            );
           }
         };
 
@@ -457,6 +553,16 @@ export function useCosmicLive() {
 
   const startMicrophone = useCallback(
     async (ctx: AudioContext) => {
+      // Reuse existing live mic stream + nodes if already running cleanly
+      if (
+        micStreamRef.current &&
+        micStreamRef.current.getAudioTracks().some((t) => t.readyState === 'live') &&
+        micProcessorRef.current
+      ) {
+        setDiagnostics((prev) => ({ ...prev, micPermission: 'granted', micActive: true }));
+        return;
+      }
+
       stopMicrophone();
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -510,7 +616,6 @@ export function useCosmicLive() {
       const source = ctx.createMediaStreamSource(stream);
       micSourceRef.current = source;
 
-      // Silent sink keeps AudioWorklet / ScriptProcessor active without mic loopback echo
       const silentGain = ctx.createGain();
       silentGain.gain.value = 0;
       silentGain.connect(ctx.destination);
@@ -523,8 +628,9 @@ export function useCosmicLive() {
           audioLevelRef.current = level;
         }
 
+        // Strict guard: never send audio to a closed or uninitialized Live session
         const ws = wsRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN || !isSessionReadyRef.current) return;
 
         const downsampled = resampleFloat32(rawSamples, ctx.sampleRate, 16000);
         const pcm16 = float32ToInt16Pcm(downsampled);
@@ -541,7 +647,6 @@ export function useCosmicLive() {
         setDiagnostics((prev) => ({ ...prev, chunksSent: prev.chunksSent + 1 }));
       };
 
-      // Handle unexpected track disconnect
       const [audioTrack] = stream.getAudioTracks();
       if (audioTrack) {
         audioTrack.onended = () => {
@@ -550,7 +655,6 @@ export function useCosmicLive() {
         };
       }
 
-      // Prefer modern AudioWorkletNode, fallback cleanly to ScriptProcessorNode
       let workletAttached = false;
       if (typeof AudioWorkletNode !== 'undefined' && ctx.audioWorklet) {
         try {
@@ -616,6 +720,77 @@ export function useCosmicLive() {
     };
   }, []);
 
+  const scheduleAutoReconnect = useCallback(
+    (context: {
+      code?: string | null;
+      message?: string | null;
+      closeCode?: number | null;
+      closeReason?: string | null;
+      retryable?: boolean;
+    }) => {
+      const canRetry = shouldAutoReconnect({
+        userWantsLive: userWantsLiveRef.current,
+        retryCount: retryCountRef.current,
+        maxRetries: MAX_AUTO_RECONNECT_ATTEMPTS,
+        errorCode: context.code,
+        retryable: context.retryable,
+      });
+
+      const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
+      if (!canRetry) {
+        userWantsLiveRef.current = false;
+        isSessionReadyRef.current = false;
+        clearReconnectTimers();
+        stopMicrophone();
+        const reasonText = formatConnectionFailureReason({
+          isOnline,
+          code: context.code,
+          serverMessage: context.message,
+          closeCode: context.closeCode,
+          closeReason: context.closeReason,
+          healthError: lastHealthErrorRef.current,
+        });
+        setErrorMessage(reasonText);
+        setCosmicState('ERROR');
+        addLog('error', 'network', `Reconnection halted: ${reasonText}`);
+        return;
+      }
+
+      if (reconnectTimerRef.current !== null) return;
+
+      const attemptIdx = retryCountRef.current;
+      const delayMs = computeReconnectDelayMs(attemptIdx);
+      retryCountRef.current += 1;
+      isSessionReadyRef.current = false;
+
+      setErrorMessage(null);
+      setCosmicState('RECONNECTING');
+      setDiagnostics((prev) => ({
+        ...prev,
+        retryCount: retryCountRef.current,
+        sessionResumptionStatus: resumeHandleRef.current ? 'reconnecting' : prev.sessionResumptionStatus,
+        lastCloseCode: context.closeCode ?? prev.lastCloseCode,
+        lastCloseReason: context.closeReason ?? prev.lastCloseReason,
+      }));
+
+      addLog(
+        'warn',
+        'network',
+        `Scheduled automatic reconnect attempt ${retryCountRef.current}/${MAX_AUTO_RECONNECT_ATTEMPTS} in ${delayMs}ms (online=${isOnline}, resumeHandle=${
+          resumeHandleRef.current ? 'present' : 'none'
+        })`,
+      );
+
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (!userWantsLiveRef.current) return;
+        void connectAttemptFnRef.current?.(true);
+      }, delayMs);
+    },
+    [addLog, clearReconnectTimers, stopMicrophone],
+  );
+
   const handleServerMessage = useCallback(
     async (raw: string) => {
       let msg: ServerWsMessage;
@@ -625,7 +800,21 @@ export function useCosmicLive() {
         return;
       }
 
+      if (msg.type === 'pong') {
+        return;
+      }
+
       if (msg.type === 'connected' || msg.type === 'mode_updated') {
+        isSessionReadyRef.current = true;
+        retryCountRef.current = 0;
+        lastHealthErrorRef.current = null;
+        if (handshakeTimerRef.current !== null) {
+          clearTimeout(handshakeTimerRef.current);
+          handshakeTimerRef.current = null;
+        }
+        if (msg.resumeHandle) {
+          resumeHandleRef.current = msg.resumeHandle;
+        }
         setErrorMessage(null);
         setCosmicState('LISTENING');
         if (typeof msg.developerVerified === 'boolean') {
@@ -635,18 +824,65 @@ export function useCosmicLive() {
           ...prev,
           activeModel: msg.model || prev.activeModel,
           activeVoice: msg.voice || prev.activeVoice,
+          retryCount: 0,
+          backendLatencyMs: msg.elapsedMs ?? prev.backendLatencyMs,
+          sessionResumptionStatus: msg.resumed
+            ? 'resumed'
+            : msg.resumeHandle
+              ? 'ready'
+              : prev.sessionResumptionStatus,
         }));
         addLog(
           'info',
           'gemini',
-          `${msg.type === 'mode_updated' ? 'Switched mode' : 'Connected'} -> model=${msg.model}, voice=${msg.voice}, mode=${msg.mode}`,
+          `${msg.type === 'mode_updated' ? 'Switched mode' : msg.resumed ? 'Resumed session' : 'Connected'} -> model=${msg.model}, voice=${msg.voice}, mode=${msg.mode}, elapsed=${msg.elapsedMs ?? 0}ms`,
         );
+        return;
+      }
+
+      if (msg.type === 'session_resumption') {
+        if (msg.handle) {
+          resumeHandleRef.current = msg.handle;
+        }
+        setDiagnostics((prev) => ({
+          ...prev,
+          sessionResumptionStatus: msg.resumable ? 'ready' : prev.sessionResumptionStatus,
+        }));
+        addLog(
+          'info',
+          'gemini',
+          `Session resumption token updated (resumable=${Boolean(msg.resumable)})`,
+        );
+        return;
+      }
+
+      if (msg.type === 'go_away') {
+        addLog(
+          'warn',
+          'gemini',
+          `Gemini Live GoAway received (timeLeft=${msg.timeLeft ?? 'unknown'}, resumable=${Boolean(
+            msg.resumable,
+          )})`,
+        );
+        if (!msg.resumable && userWantsLiveRef.current) {
+          setCosmicState('RECONNECTING');
+        }
         return;
       }
 
       if (msg.type === 'developer_verified') {
         setIsDeveloperVerified(Boolean(msg.verified));
         addLog('info', 'gemini', 'Developer session verified -> Respect Mode enabled.');
+        return;
+      }
+
+      if (msg.type === 'knowledge_sources' && msg.result) {
+        setLiveKnowledge(msg.result);
+        addLog(
+          msg.result.ok ? 'info' : 'warn',
+          'knowledge',
+          `Live search (${msg.result.category}): "${msg.result.query}" -> ${msg.result.items.length} results (offline=${msg.result.offline})`,
+        );
         return;
       }
 
@@ -714,26 +950,91 @@ export function useCosmicLive() {
         return;
       }
 
-      if (msg.type === 'session_closed' || msg.type === 'disconnected') {
+      if (msg.type === 'session_closed') {
+        isSessionReadyRef.current = false;
         clearAudioQueue('session-closed');
-        if (stateRef.current !== 'IDLE') {
+        if (msg.resumeHandle) {
+          resumeHandleRef.current = msg.resumeHandle;
+        }
+        setDiagnostics((prev) => ({
+          ...prev,
+          lastCloseCode: msg.closeCode ?? prev.lastCloseCode,
+          lastCloseReason: msg.reason ?? prev.lastCloseReason,
+        }));
+        addLog(
+          'warn',
+          'gemini',
+          `Gemini session closed (code=${msg.closeCode ?? 'n/a'}, reason=${msg.reason ?? 'unknown'}, retryable=${msg.retryable !== false})`,
+        );
+
+        if (userWantsLiveRef.current) {
+          if (msg.code === 'RESUMPTION_HANDLE_EXPIRED') {
+            resumeHandleRef.current = null;
+          }
+          scheduleAutoReconnect({
+            code: msg.code,
+            message: msg.reason,
+            closeCode: msg.closeCode,
+            closeReason: msg.reason,
+            retryable: msg.retryable,
+          });
+        } else if (stateRef.current !== 'IDLE') {
           setCosmicState('IDLE');
         }
-        addLog('warn', 'gemini', msg.reason || 'Gemini Live session closed.');
+        return;
+      }
+
+      if (msg.type === 'disconnected') {
+        isSessionReadyRef.current = false;
+        clearAudioQueue('server-disconnected');
+        if (!userWantsLiveRef.current) {
+          setCosmicState('IDLE');
+        }
         return;
       }
 
       if (msg.type === 'error') {
         const errText = msg.message || 'Unknown Gemini Live error.';
-        setErrorMessage(errText);
-        setCosmicState('ERROR');
-        addLog('error', 'gemini', errText);
+        addLog('error', 'gemini', `API Error [${msg.code ?? 'UNKNOWN'}]: ${errText}`);
+        if (userWantsLiveRef.current && msg.retryable !== false) {
+          scheduleAutoReconnect({
+            code: msg.code,
+            message: errText,
+            retryable: msg.retryable,
+          });
+        } else {
+          userWantsLiveRef.current = false;
+          isSessionReadyRef.current = false;
+          clearReconnectTimers();
+          stopMicrophone();
+          setErrorMessage(
+            formatConnectionFailureReason({
+              isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+              code: msg.code,
+              serverMessage: errText,
+            }),
+          );
+          setCosmicState('ERROR');
+        }
       }
     },
-    [addLog, appendTranscript, clearAudioQueue, playPcmChunk],
+    [
+      addLog,
+      appendTranscript,
+      clearAudioQueue,
+      clearReconnectTimers,
+      playPcmChunk,
+      scheduleAutoReconnect,
+      stopMicrophone,
+    ],
   );
 
   const disconnect = useCallback(() => {
+    userWantsLiveRef.current = false;
+    isSessionReadyRef.current = false;
+    retryCountRef.current = 0;
+    resumeHandleRef.current = null;
+    clearReconnectTimers();
     clearAudioQueue('user-disconnect');
     stopMicrophone();
     if (wsRef.current) {
@@ -743,7 +1044,7 @@ export function useCosmicLive() {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'disconnect' }));
         }
-        ws.close();
+        ws.close(1000, 'User powered off Cosmic AI');
       } catch {
         // ignore
       }
@@ -751,89 +1052,239 @@ export function useCosmicLive() {
     setCosmicState('IDLE');
     setErrorMessage(null);
     setMicNotice(null);
-    addLog('info', 'gemini', 'Cosmic AI session disconnected.');
-  }, [addLog, clearAudioQueue, stopMicrophone]);
+    setDiagnostics((prev) => ({
+      ...prev,
+      retryCount: 0,
+      sessionResumptionStatus: 'none',
+    }));
+    addLog('info', 'gemini', 'Cosmic AI session powered off cleanly.');
+  }, [addLog, clearAudioQueue, clearReconnectTimers, stopMicrophone]);
+
+  const executeConnectAttempt = useCallback(
+    async (isRetry: boolean) => {
+      if (!userWantsLiveRef.current && isRetry) return;
+
+      const startedIso = new Date().toISOString();
+      if (!isRetry) {
+        retryCountRef.current = 0;
+        lastHealthErrorRef.current = null;
+        setErrorMessage(null);
+        setMicNotice(null);
+        setCosmicState('CONNECTING');
+      } else {
+        setCosmicState('RECONNECTING');
+      }
+
+      const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      setDiagnostics((prev) => ({
+        ...prev,
+        networkStatus: isOnline ? 'online' : 'offline',
+      }));
+
+      addLog(
+        'info',
+        'network',
+        `Connection start=${startedIso} retry=${retryCountRef.current} online=${isOnline}`,
+      );
+
+      if (!isOnline) {
+        scheduleAutoReconnect({
+          code: 'OFFLINE',
+          message: 'Device network is offline.',
+          retryable: true,
+        });
+        return;
+      }
+
+      try {
+        // 1. Ensure AudioContext + Microphone on initial power-on (and keep alive across retries)
+        const ctx = await ensureAudioContext();
+        try {
+          await startMicrophone(ctx);
+          if (!isRetry) setIsMicMuted(false);
+        } catch (micErr) {
+          const micMsg = micErr instanceof Error ? micErr.message : String(micErr);
+          setIsMicMuted(true);
+          setMicNotice(micMsg);
+        }
+
+        if (!userWantsLiveRef.current) return;
+
+        // 2. Wake / probe backend health and measure latency before opening WS
+        const httpBase = resolveHttpBaseUrl(backendUrlRef.current);
+        const healthUrl = `${httpBase}/api/health`;
+        const health = await probeVoiceBackendHealth(healthUrl, 5000);
+        setDiagnostics((prev) => ({ ...prev, backendLatencyMs: health.latencyMs }));
+
+        if (health.reachable) {
+          lastHealthErrorRef.current = null;
+          addLog(
+            'info',
+            'network',
+            `Backend health OK (${health.latencyMs}ms, hasApiKey=${String(health.hasApiKey)})`,
+          );
+          if (health.hasApiKey === false) {
+            userWantsLiveRef.current = false;
+            stopMicrophone();
+            setErrorMessage(
+              'GEMINI_API_KEY is missing on the voice backend. Configure it in Settings > Secrets.',
+            );
+            setCosmicState('ERROR');
+            return;
+          }
+        } else {
+          lastHealthErrorRef.current = health.error || 'Health check timed out';
+          addLog(
+            'warn',
+            'network',
+            `Backend health probe warning (${health.latencyMs}ms): ${lastHealthErrorRef.current}`,
+          );
+        }
+
+        if (!userWantsLiveRef.current) return;
+
+        // 3. Close any previous socket strictly before creating a fresh one (zero duplicate sessions)
+        if (wsRef.current) {
+          const stale = wsRef.current;
+          wsRef.current = null;
+          isSessionReadyRef.current = false;
+          try {
+            stale.close();
+          } catch {
+            // ignore
+          }
+        }
+
+        const wsUrl = resolveLiveWsUrl(backendUrlRef.current);
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        if (handshakeTimerRef.current !== null) clearTimeout(handshakeTimerRef.current);
+        handshakeTimerRef.current = window.setTimeout(() => {
+          if (wsRef.current === ws && !isSessionReadyRef.current && userWantsLiveRef.current) {
+            addLog('warn', 'network', `WebSocket handshake timed out (10000ms) -> ${wsUrl}`);
+            try {
+              ws.close(4000, 'Handshake timeout');
+            } catch {
+              // ignore
+            }
+          }
+        }, 10000);
+
+        let socketErrored = false;
+
+        ws.onopen = () => {
+          if (wsRef.current !== ws) {
+            ws.close();
+            return;
+          }
+          addLog(
+            'info',
+            'gemini',
+            `WebSocket open -> ${wsUrl} (resumeHandle=${resumeHandleRef.current ? 'present' : 'none'})`,
+          );
+          ws.send(
+            JSON.stringify({
+              type: 'connect',
+              badmashMode: modeRef.current === 'badmash',
+              resumeHandle: resumeHandleRef.current,
+              features: featuresRef.current,
+            }),
+          );
+
+          if (pingIntervalRef.current !== null) clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = window.setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'ping' }));
+            }
+          }, 25000);
+        };
+
+        ws.onmessage = (event) => {
+          if (wsRef.current !== ws) return;
+          void handleServerMessage(String(event.data));
+        };
+
+        ws.onerror = () => {
+          socketErrored = true;
+          addLog('warn', 'network', `WebSocket transport error on ${wsUrl}.`);
+        };
+
+        ws.onclose = (ev) => {
+          if (wsRef.current !== ws) return;
+          wsRef.current = null;
+          isSessionReadyRef.current = false;
+          if (handshakeTimerRef.current !== null) {
+            clearTimeout(handshakeTimerRef.current);
+            handshakeTimerRef.current = null;
+          }
+          if (pingIntervalRef.current !== null) {
+            clearInterval(pingIntervalRef.current);
+            pingIntervalRef.current = null;
+          }
+          clearAudioQueue('ws-closed');
+          setDiagnostics((prev) => ({
+            ...prev,
+            lastCloseCode: ev.code,
+            lastCloseReason: ev.reason || (socketErrored ? 'Transport error' : 'Closed'),
+          }));
+          addLog(
+            'warn',
+            'network',
+            `WebSocket closed code=${ev.code} reason="${ev.reason || 'none'}" wantedLive=${userWantsLiveRef.current}`,
+          );
+
+          if (userWantsLiveRef.current) {
+            scheduleAutoReconnect({
+              code: socketErrored ? 'WS_TRANSPORT_ERROR' : 'WS_CLOSED',
+              closeCode: ev.code,
+              closeReason: ev.reason || (socketErrored ? 'Connection interrupted' : 'Closed'),
+              retryable: true,
+            });
+          } else {
+            stopMicrophone();
+            if (stateRef.current !== 'ERROR' && stateRef.current !== 'IDLE') {
+              setCosmicState('IDLE');
+            }
+          }
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addLog('error', 'gemini', `Connect setup exception: ${msg}`);
+        if (userWantsLiveRef.current) {
+          scheduleAutoReconnect({
+            code: 'CLIENT_CONNECT_EXCEPTION',
+            message: msg,
+            retryable: true,
+          });
+        } else {
+          setErrorMessage(msg);
+          setCosmicState('ERROR');
+          stopMicrophone();
+        }
+      }
+    },
+    [
+      addLog,
+      clearAudioQueue,
+      ensureAudioContext,
+      handleServerMessage,
+      scheduleAutoReconnect,
+      startMicrophone,
+      stopMicrophone,
+    ],
+  );
+
+  useEffect(() => {
+    connectAttemptFnRef.current = executeConnectAttempt;
+  }, [executeConnectAttempt]);
 
   const connect = useCallback(async () => {
     if (stateRef.current === 'CONNECTING') return;
-    setErrorMessage(null);
-    setMicNotice(null);
-    setCosmicState('CONNECTING');
-
-    try {
-      const ctx = await ensureAudioContext();
-      try {
-        await startMicrophone(ctx);
-        setIsMicMuted(false);
-      } catch (micErr) {
-        const micMsg = micErr instanceof Error ? micErr.message : String(micErr);
-        setIsMicMuted(true);
-        setMicNotice(micMsg);
-      }
-
-      if (wsRef.current) {
-        try {
-          wsRef.current.close();
-        } catch {
-          // ignore
-        }
-        wsRef.current = null;
-      }
-
-      const wsUrl = resolveLiveWsUrl(backendUrl);
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        addLog('info', 'gemini', `WebSocket connected to ${wsUrl}. Initializing Gemini Live...`);
-        ws.send(
-          JSON.stringify({
-            type: 'connect',
-            badmashMode: modeRef.current === 'badmash',
-          }),
-        );
-      };
-
-      ws.onmessage = (event) => {
-        void handleServerMessage(String(event.data));
-      };
-
-      ws.onerror = () => {
-        addLog('warn', 'gemini', `WebSocket transport error connecting to ${wsUrl}.`);
-        setErrorMessage(
-          isPackagedApkOrigin()
-            ? 'Voice server is waking up or unreachable. Wait 20 seconds and tap Power On again.'
-            : 'Voice transport error. Check server status and retry.',
-        );
-        setCosmicState('ERROR');
-      };
-
-      ws.onclose = (ev) => {
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-          stopMicrophone();
-          clearAudioQueue('ws-closed');
-          if (stateRef.current !== 'ERROR' && stateRef.current !== 'IDLE') {
-            setCosmicState('IDLE');
-          }
-          addLog('info', 'gemini', `WebSocket closed (code ${ev.code}).`);
-        }
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(msg);
-      setCosmicState('ERROR');
-      stopMicrophone();
-    }
-  }, [
-    addLog,
-    backendUrl,
-    clearAudioQueue,
-    ensureAudioContext,
-    handleServerMessage,
-    startMicrophone,
-    stopMicrophone,
-  ]);
+    clearReconnectTimers();
+    userWantsLiveRef.current = true;
+    await executeConnectAttempt(false);
+  }, [clearReconnectTimers, executeConnectAttempt]);
 
   const retryMicrophone = useCallback(async () => {
     try {
@@ -854,8 +1305,8 @@ export function useCosmicLive() {
       if (!trimmed) return;
       await ensureAudioContext();
       const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        setErrorMessage('Power on Cosmic AI first to send a live message.');
+      if (!ws || ws.readyState !== WebSocket.OPEN || !isSessionReadyRef.current) {
+        setErrorMessage('Power on Cosmic AI and wait for Ready/Listening before sending.');
         return;
       }
       clearAudioQueue('user-text-interrupt');
@@ -892,6 +1343,7 @@ export function useCosmicLive() {
   const toggleBadmashMode = useCallback(() => {
     const next: CosmicMode = modeRef.current === 'normal' ? 'badmash' : 'normal';
     setMode(next);
+    resumeHandleRef.current = null;
     addLog(
       'info',
       'gemini',
@@ -905,10 +1357,75 @@ export function useCosmicLive() {
         JSON.stringify({
           type: 'set_mode',
           badmashMode: next === 'badmash',
+          features: featuresRef.current,
         }),
       );
     }
   }, [addLog, clearAudioQueue]);
+
+  const updateFeatures = useCallback(
+    (patch: Partial<CosmicFeaturesConfig>) => {
+      setFeatures((prev) => {
+        const next: CosmicFeaturesConfig = { ...prev, ...patch };
+        try {
+          window.localStorage.setItem(FEATURES_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore storage errors
+        }
+        featuresRef.current = next;
+        addLog('info', 'gemini', `Updated entertainment features: ${JSON.stringify(patch)}`);
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          resumeHandleRef.current = null;
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'update_features',
+              features: next,
+            }),
+          );
+        }
+        return next;
+      });
+    },
+    [addLog],
+  );
+
+  const runLiveKnowledgeSearch = useCallback(
+    async (query: string, category = 'general'): Promise<LiveKnowledgeSearchResult> => {
+      const base = resolveHttpBaseUrl(backendUrlRef.current);
+      try {
+        const res = await fetch(`${base}/api/knowledge/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, category }),
+        });
+        const data = (await res.json()) as LiveKnowledgeSearchResult;
+        setLiveKnowledge(data);
+        addLog(
+          data.ok ? 'info' : 'warn',
+          'knowledge',
+          `Live search "${query}" -> ${data.items?.length ?? 0} results (ok=${data.ok})`,
+        );
+        return data;
+      } catch (err) {
+        const offlineResult: LiveKnowledgeSearchResult = {
+          ok: false,
+          query,
+          category,
+          fetchedAt: new Date().toISOString(),
+          offline: true,
+          summary:
+            'Live information is temporarily unavailable right now. Check your internet connection and retry.',
+          items: [],
+          sources: [],
+          error: err instanceof Error ? err.message : String(err),
+        };
+        setLiveKnowledge(offlineResult);
+        addLog('warn', 'knowledge', `Live search offline/failed: ${offlineResult.error}`);
+        return offlineResult;
+      }
+    },
+    [addLog],
+  );
 
   const testSpeaker = useCallback(async () => {
     try {
@@ -960,6 +1477,34 @@ export function useCosmicLive() {
     [addLog],
   );
 
+  // Monitor browser online/offline transitions and trigger automatic recovery on restore
+  useEffect(() => {
+    const handleOnline = () => {
+      setDiagnostics((prev) => ({ ...prev, networkStatus: 'online' }));
+      addLog('info', 'network', 'Network connection restored (online).');
+      if (
+        userWantsLiveRef.current &&
+        (stateRef.current === 'RECONNECTING' || stateRef.current === 'ERROR')
+      ) {
+        retryCountRef.current = 0;
+        clearReconnectTimers();
+        void executeConnectAttempt(true);
+      }
+    };
+
+    const handleOffline = () => {
+      setDiagnostics((prev) => ({ ...prev, networkStatus: 'offline' }));
+      addLog('warn', 'network', 'Network connection lost (offline).');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [addLog, clearReconnectTimers, executeConnectAttempt]);
+
   // Monitor microphone permission & device changes cleanly
   useEffect(() => {
     let cancelled = false;
@@ -1001,7 +1546,7 @@ export function useCosmicLive() {
   // Pre-warm backend when packaged APK launches
   useEffect(() => {
     if (!isPackagedApkOrigin()) return;
-    const base = (backendUrl || DEFAULT_ANDROID_BACKEND_URL).replace(/\/+$/, '');
+    const base = resolveHttpBaseUrl(backendUrl);
     fetch(`${base}/api/health`).catch(() => {
       // silent background wake-up only
     });
@@ -1010,6 +1555,9 @@ export function useCosmicLive() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      userWantsLiveRef.current = false;
+      isSessionReadyRef.current = false;
+      clearReconnectTimers();
       clearAudioQueue('unmount');
       stopMicrophone();
       if (wsRef.current) {
@@ -1023,12 +1571,16 @@ export function useCosmicLive() {
         void audioCtxRef.current.close();
       }
     };
-  }, [clearAudioQueue, stopMicrophone]);
+  }, [clearAudioQueue, clearReconnectTimers, stopMicrophone]);
 
   const updateBackendUrl = useCallback(
     (nextUrl: string) => {
       const cleaned = nextUrl.trim().replace(/\/+$/, '');
-      if (cleaned && !/^https:\/\//i.test(cleaned) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(cleaned)) {
+      if (
+        cleaned &&
+        !/^https:\/\//i.test(cleaned) &&
+        !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(cleaned)
+      ) {
         addLog('warn', 'bridge', 'Backend server URL must use HTTPS.');
         return false;
       }
@@ -1042,7 +1594,11 @@ export function useCosmicLive() {
         // ignore storage errors
       }
       setBackendUrlState(cleaned || (isPackagedApkOrigin() ? DEFAULT_ANDROID_BACKEND_URL : ''));
-      addLog('info', 'bridge', cleaned ? `Updated voice backend URL -> ${cleaned}` : 'Reset voice backend URL to default.');
+      addLog(
+        'info',
+        'bridge',
+        cleaned ? `Updated voice backend URL -> ${cleaned}` : 'Reset voice backend URL to default.',
+      );
       return true;
     },
     [addLog],
@@ -1053,6 +1609,7 @@ export function useCosmicLive() {
     cosmicState,
     isMicMuted,
     isDeveloperVerified,
+    features,
     errorMessage,
     micNotice,
     backendUrl,
@@ -1061,11 +1618,15 @@ export function useCosmicLive() {
     diagnosticLogs,
     diagnostics,
     speakerTestResult,
+    liveKnowledge,
     bridgeRuntime: bridgeEnv.current,
     audioLevelRef,
     togglePower,
     toggleMicMute,
     toggleBadmashMode,
+    updateFeatures,
+    runLiveKnowledgeSearch,
+    clearLiveKnowledge: () => setLiveKnowledge(null),
     retryMicrophone,
     sendTextMessage,
     testSpeaker,

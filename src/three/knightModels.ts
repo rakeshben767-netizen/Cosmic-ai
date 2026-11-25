@@ -486,39 +486,76 @@ export function createBlueKnightRig(
   visorRight.rotation.z = 0.22;
   headGroup.add(visorRight);
 
-  // Sculpted Full Spiky Black Hair Crown & Bangs
-  const hairCap = new THREE.Mesh(
-    new THREE.SphereGeometry(0.148, 14, 12, 0, Math.PI * 2, 0, Math.PI * 0.58),
+  // Clean, stylish short textured black hairstyle + refined futuristic brow circlet (zero sharp spikes)
+  const hairCrownBase = new THREE.Mesh(
+    new THREE.SphereGeometry(0.146, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.56),
     hairMat,
   );
-  hairCap.position.set(0, 0.02, -0.01);
-  headGroup.add(hairCap);
+  hairCrownBase.scale.set(0.95, 0.96, 1.04);
+  hairCrownBase.position.set(0, 0.025, -0.01);
+  headGroup.add(hairCrownBase);
 
-  const hairSpikes: Array<[number, number, number, number, number, number, number]> = [
-    // Front bangs draping over visor edge
-    [-0.065, 0.095, 0.12, 1.25, 0, 0.25, 0.15],
-    [-0.02, 0.105, 0.135, 1.35, 0, 0.08, 0.16],
-    [0.03, 0.105, 0.13, 1.32, 0, -0.12, 0.16],
-    [0.075, 0.09, 0.115, 1.2, 0, -0.32, 0.14],
-    // Crown spikes
-    [0, 0.165, 0.01, -0.15, 0, 0.08, 0.19],
-    [-0.08, 0.15, 0.03, 0.1, 0, 0.52, 0.18],
-    [0.08, 0.15, 0.03, 0.1, 0, -0.52, 0.18],
-    [-0.12, 0.11, -0.02, -0.15, 0, 0.85, 0.17],
-    [0.12, 0.11, -0.02, -0.15, 0, -0.85, 0.17],
-    // Back spikes
-    [0, 0.14, -0.11, -0.78, 0, 0, 0.19],
-    [-0.075, 0.11, -0.11, -0.68, 0, 0.45, 0.17],
-    [0.075, 0.11, -0.11, -0.68, 0, -0.45, 0.17],
-    [-0.11, 0.05, -0.09, -0.95, 0, 0.72, 0.15],
-    [0.11, 0.05, -0.09, -0.95, 0, -0.72, 0.15],
+  // Subtle textured hair layers sweeping back and slightly angled at the temples (no cones)
+  const texturedLayers: Array<[number, number, number, number, number, number, number, number]> = [
+    // [x, y, z, rx, ry, rz, width, scaleY]
+    [0, 0.135, -0.015, -0.18, 0, 0, 0.125, 0.75],
+    [-0.055, 0.118, 0.02, -0.08, 0.22, 0.24, 0.082, 0.72],
+    [0.055, 0.118, 0.02, -0.08, -0.22, -0.24, 0.082, 0.72],
+    [-0.088, 0.068, -0.02, -0.12, 0.42, 0.36, 0.065, 0.85],
+    [0.088, 0.068, -0.02, -0.12, -0.42, -0.36, 0.065, 0.85],
+    [0, 0.092, -0.105, -0.55, 0, 0, 0.115, 0.85],
   ];
-  for (const [hx, hy, hz, rx, ry, rz, len] of hairSpikes) {
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.048, len, 5), hairMat);
-    spike.position.set(hx, hy, hz);
-    spike.rotation.set(rx, ry, rz);
-    headGroup.add(spike);
+  for (const [lx, ly, lz, rx, ry, rz, halfW, sy] of texturedLayers) {
+    const lock = createBeveledShapeMesh(
+      [
+        [-halfW, 0.04],
+        [halfW, 0.04],
+        [halfW * 0.78, -0.045 * sy],
+        [0, -0.072 * sy],
+        [-halfW * 0.78, -0.045 * sy],
+      ],
+      0.065,
+      0.016,
+      hairMat,
+      castShadow,
+    );
+    lock.position.set(lx, ly, lz);
+    lock.rotation.set(rx, ry, rz);
+    headGroup.add(lock);
   }
+
+  // Soft textured front side-part wave framing the forehead cleanly
+  const frontSweep = createBeveledShapeMesh(
+    [
+      [-0.085, 0.028],
+      [0.04, 0.042],
+      [0.095, 0.014],
+      [0.045, -0.018],
+      [-0.065, -0.012],
+    ],
+    0.042,
+    0.012,
+    hairMat,
+    castShadow,
+  );
+  frontSweep.position.set(-0.01, 0.095, 0.098);
+  frontSweep.rotation.set(0.26, 0.1, 0.08);
+  headGroup.add(frontSweep);
+
+  // Refined futuristic smooth brow circlet framing the visor
+  const browCirclet = new THREE.Mesh(
+    new THREE.TorusGeometry(0.118, 0.012, 8, 28, Math.PI * 1.18),
+    gunmetalTrimMat,
+  );
+  browCirclet.rotation.x = Math.PI / 2 - 0.18;
+  browCirclet.rotation.z = -Math.PI * 0.09;
+  browCirclet.position.set(0, 0.052, 0.028);
+  headGroup.add(browCirclet);
+
+  const browNode = new THREE.Mesh(new THREE.OctahedronGeometry(0.018, 0), cyanGlowMat);
+  browNode.scale.set(1.2, 0.75, 0.6);
+  browNode.position.set(0, 0.056, 0.145);
+  headGroup.add(browNode);
 
   // Right Arm + Layered Pauldron + Giant Blue Energy Greatsword
   const rightArmGroup = new THREE.Group();
@@ -818,19 +855,20 @@ export function createPurpleKnightRig(
 
   for (let s = 0; s < 8; s++) {
     const angle = (s * Math.PI * 2) / 8;
-    const starSpikeGroup = new THREE.Group();
-    starSpikeGroup.position.set(Math.cos(angle) * 0.98, Math.sin(angle) * 0.98, 0);
-    starSpikeGroup.rotation.z = angle - Math.PI / 2;
+    const starNodeGroup = new THREE.Group();
+    starNodeGroup.position.set(Math.cos(angle) * 0.97, Math.sin(angle) * 0.97, 0);
+    starNodeGroup.rotation.z = angle - Math.PI / 2;
 
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.24, 4), gunmetalTrimMat);
-    spike.position.set(0, 0.1, 0);
-    starSpikeGroup.add(spike);
+    const bezel = new THREE.Mesh(new THREE.OctahedronGeometry(0.058, 0), gunmetalTrimMat);
+    bezel.scale.set(0.95, 1.35, 0.52);
+    starNodeGroup.add(bezel);
 
-    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.04, 0), violetGlowMat);
-    gem.position.set(0, 0.01, 0.032);
-    starSpikeGroup.add(gem);
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.036, 0), violetGlowMat);
+    gem.scale.set(0.85, 1.2, 0.65);
+    gem.position.set(0, 0, 0.026);
+    starNodeGroup.add(gem);
 
-    haloRing.add(starSpikeGroup);
+    haloRing.add(starNodeGroup);
   }
 
   // Sculpted Armored Belt & Violet Crystal Clasp
@@ -943,13 +981,13 @@ export function createPurpleKnightRig(
   collar.position.set(0, 0.78, -0.01);
   upperBody.add(collar);
 
-  // Head + Sleek Dark Faceplate + Violet Visor + Towering 7-Spike Crown
+  // Refined Dark Fantasy Helmet + Elegant Crown-Like Armor Details (excessive sharp head spikes removed)
   const headGroup = new THREE.Group();
   headGroup.position.set(0, 0.96, 0.02);
   upperBody.add(headGroup);
 
-  const helmBase = new THREE.Mesh(new THREE.SphereGeometry(0.136, 16, 14), obsidianArmorMat);
-  helmBase.scale.set(0.9, 1.06, 1.02);
+  const helmBase = new THREE.Mesh(new THREE.SphereGeometry(0.136, 20, 16), obsidianArmorMat);
+  helmBase.scale.set(0.92, 1.06, 1.04);
   helmBase.castShadow = castShadow;
   headGroup.add(helmBase);
 
@@ -969,6 +1007,26 @@ export function createPurpleKnightRig(
   faceplate.position.set(0, -0.025, 0.092);
   headGroup.add(faceplate);
 
+  // Sleek Temple & Cheek Armor Plates
+  for (const side of [-1, 1] as const) {
+    const cheekPlate = createBeveledShapeMesh(
+      [
+        [-0.042, 0.065],
+        [0.042, 0.085],
+        [0.032, -0.075],
+        [-0.025, -0.095],
+      ],
+      0.045,
+      0.011,
+      gunmetalTrimMat,
+      castShadow,
+    );
+    cheekPlate.position.set(side * 0.105, -0.02, 0.03);
+    cheekPlate.rotation.y = side * 0.48;
+    cheekPlate.rotation.z = side * 0.12;
+    headGroup.add(cheekPlate);
+  }
+
   // Piercing Violet V-Visor Slits
   const visorLeft = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.018, 0.028), violetGlowMat);
   visorLeft.position.set(-0.036, 0.018, 0.15);
@@ -980,22 +1038,53 @@ export function createPurpleKnightRig(
   visorRight.rotation.z = 0.26;
   headGroup.add(visorRight);
 
-  // 7-Spike Royal Shadow Crown
-  const crownSpecs: Array<[number, number, number, number, number, number]> = [
-    [0, 0.2, 0.03, 0, 0, 0.26],
-    [-0.055, 0.18, 0.035, 0.12, 0.18, 0.22],
-    [0.055, 0.18, 0.035, 0.12, -0.18, 0.22],
-    [-0.105, 0.16, 0.02, 0.05, 0.38, 0.22],
-    [0.105, 0.16, 0.02, 0.05, -0.38, 0.22],
-    [-0.13, 0.12, -0.03, -0.18, 0.56, 0.18],
-    [0.13, 0.12, -0.03, -0.18, -0.56, 0.18],
-  ];
-  for (const [cx, cy, cz, rx, rz, len] of crownSpecs) {
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.026, len, 4), gunmetalTrimMat);
-    spike.position.set(cx, cy, cz);
-    spike.rotation.set(rx, 0, rz);
-    headGroup.add(spike);
-  }
+  // Smooth Central Helmet Crest Ridge (clean aerodynamic silhouette)
+  const helmCrest = createBeveledShapeMesh(
+    [
+      [-0.018, 0.055],
+      [0.018, 0.055],
+      [0.014, -0.04],
+      [-0.014, -0.04],
+    ],
+    0.2,
+    0.01,
+    gunmetalTrimMat,
+    castShadow,
+  );
+  helmCrest.rotation.x = 0.18;
+  helmCrest.position.set(0, 0.132, -0.01);
+  headGroup.add(helmCrest);
+
+  // Elegant Sculpted Royal Circlet & Low-Profile Crown Reliefs
+  const crownBand = new THREE.Mesh(
+    new THREE.TorusGeometry(0.124, 0.014, 10, 32),
+    gunmetalTrimMat,
+  );
+  crownBand.rotation.x = Math.PI / 2 - 0.12;
+  crownBand.position.set(0, 0.088, 0.008);
+  headGroup.add(crownBand);
+
+  const crownCrestFront = createBeveledShapeMesh(
+    [
+      [-0.065, -0.02],
+      [-0.038, 0.038],
+      [0, 0.072],
+      [0.038, 0.038],
+      [0.065, -0.02],
+    ],
+    0.028,
+    0.009,
+    gunmetalTrimMat,
+    castShadow,
+  );
+  crownCrestFront.position.set(0, 0.118, 0.118);
+  crownCrestFront.rotation.x = -0.18;
+  headGroup.add(crownCrestFront);
+
+  const crownJewel = new THREE.Mesh(new THREE.OctahedronGeometry(0.022, 0), violetGlowMat);
+  crownJewel.scale.set(0.85, 1.3, 0.6);
+  crownJewel.position.set(0, 0.114, 0.138);
+  headGroup.add(crownJewel);
 
   // Right Arm (Viewer's Left) + Enormous Vertical Lightning Purple Greatsword
   const rightArmGroup = new THREE.Group();

@@ -8,6 +8,7 @@ import {
   GoogleGenAI,
   Modality,
   type FunctionResponse,
+  type LiveConnectConfig,
   type LiveServerMessage,
 } from '@google/genai';
 import {
@@ -16,10 +17,19 @@ import {
   COSMIC_DEVELOPER_RESPECT_NOTICE,
   COSMIC_TOOL_DECLARATIONS,
   getVoiceNameForMode,
+  resolveCosmicFeatures,
   type CosmicPromptOptions,
 } from './src/utils/cosmicPrompts.ts';
 import { verifyDeveloperCode } from './src/utils/developerAuth.ts';
-import type { CosmicMode } from './src/types/cosmic.ts';
+import {
+  checkKnowledgeRateLimit,
+  searchLiveKnowledge,
+} from './src/services/liveKnowledgeService.ts';
+import {
+  DEFAULT_COSMIC_FEATURES,
+  type CosmicFeaturesConfig,
+  type CosmicMode,
+} from './src/types/cosmic.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,8 +40,8 @@ const LIVE_MODEL_CANDIDATES = Array.from(
   new Set(
     [
       process.env.COSMIC_LIVE_MODEL?.trim(),
-      'gemini-3.1-flash-live-preview',
       'gemini-3.8-live',
+      'gemini-3.1-flash-live-preview',
     ].filter((m): m is string => Boolean(m && m.length > 0)),
   ),
 );
@@ -39,8 +49,18 @@ const LIVE_MODEL_CANDIDATES = Array.from(
 type LiveSession = Awaited<ReturnType<GoogleGenAI['live']['connect']>>;
 
 interface ClientControlMessage {
-  type: 'connect' | 'set_mode' | 'audio' | 'text' | 'tool_response' | 'disconnect';
+  type:
+    | 'connect'
+    | 'set_mode'
+    | 'update_features'
+    | 'audio'
+    | 'text'
+    | 'tool_response'
+    | 'ping'
+    | 'disconnect';
   badmashMode?: boolean;
+  resumeHandle?: string | null;
+  features?: Partial<CosmicFeaturesConfig>;
   data?: string;
   mimeType?: string;
   text?: string;
@@ -68,139 +88,247 @@ function createGenAIClient(): GoogleGenAI {
   });
 }
 
+function tryCreateOptionalGenAIClient(): GoogleGenAI | null {
+  if (!process.env.GEMINI_API_KEY) return null;
+  try {
+    return createGenAIClient();
+  } catch {
+    return null;
+  }
+}
+
 function sendJson(ws: WebSocket, payload: Record<string, unknown>): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
   }
 }
 
+function classifyLiveError(message: string, closeCode?: number): {
+  code: string;
+  retryable: boolean;
+} {
+  const lower = message.toLowerCase();
+  if (/api key|api_key_invalid|permission_denied|403|1007/.test(lower) || closeCode === 1007) {
+    if (/resumption|handle|session/.test(lower)) {
+      return { code: 'RESUMPTION_HANDLE_EXPIRED', retryable: true };
+    }
+    return { code: 'API_KEY_OR_CONFIG_ERROR', retryable: false };
+  }
+  if (/quota|resource_exhausted|429|rate limit/.test(lower)) {
+    return { code: 'API_QUOTA_OR_RATE_LIMIT', retryable: true };
+  }
+  if (/not_found|404|model .* not found/.test(lower)) {
+    return { code: 'MODEL_UNAVAILABLE', retryable: true };
+  }
+  if (/timeout|timed out|etimedout|econnreset|socket|goaway|1001|1006|1011|1012|1013/.test(lower)) {
+    return { code: 'TRANSIENT_CONNECTION_DROP', retryable: true };
+  }
+  return { code: 'LIVE_CONNECTION_ERROR', retryable: true };
+}
+
+interface ConnectAttemptOptions {
+  mode: CosmicMode;
+  promptOptions: CosmicPromptOptions;
+  resumeHandle: string | null;
+  enableResumptionAndCompression: boolean;
+  onMessage: (message: LiveServerMessage) => void;
+  onSessionClosed: (closeCode: number | undefined, reason: string) => void;
+  onSessionError: (errMsg: string) => void;
+}
+
+async function attemptSingleLiveConnect(
+  ai: GoogleGenAI,
+  model: string,
+  opts: ConnectAttemptOptions,
+): Promise<{ session: LiveSession; model: string; voice: string; resumed: boolean }> {
+  const voice = getVoiceNameForMode(opts.mode);
+  const systemInstruction = buildCosmicSystemInstruction(opts.mode, opts.promptOptions);
+  const attemptStart = Date.now();
+
+  const liveConfig: LiveConnectConfig = {
+    responseModalities: [Modality.AUDIO],
+    speechConfig: {
+      voiceConfig: {
+        prebuiltVoiceConfig: { voiceName: voice },
+      },
+    },
+    systemInstruction,
+    tools: [{ functionDeclarations: COSMIC_TOOL_DECLARATIONS }],
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
+  };
+
+  if (opts.enableResumptionAndCompression) {
+    liveConfig.sessionResumption = opts.resumeHandle
+      ? { handle: opts.resumeHandle }
+      : {};
+    liveConfig.contextWindowCompression = { slidingWindow: {} };
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let setupDone = false;
+    let sessionRef: LiveSession | null = null;
+
+    const finishResolve = (sess: LiveSession) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(setupTimeout);
+      console.info(
+        `[Cosmic Live] Connected model=${model}, voice=${voice}, resumed=${Boolean(
+          opts.resumeHandle && opts.enableResumptionAndCompression,
+        )}, elapsed=${Date.now() - attemptStart}ms`,
+      );
+      resolve({
+        session: sess,
+        model,
+        voice,
+        resumed: Boolean(opts.resumeHandle && opts.enableResumptionAndCompression),
+      });
+    };
+
+    const finishReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(setupTimeout);
+      try {
+        sessionRef?.close();
+      } catch {
+        // ignore close failure
+      }
+      reject(err);
+    };
+
+    const setupTimeout = setTimeout(() => {
+      finishReject(new Error(`Timed out waiting for setupComplete on ${model} after 9000ms`));
+    }, 9000);
+
+    ai.live
+      .connect({
+        model,
+        config: liveConfig,
+        callbacks: {
+          onopen: () => {
+            console.log(`[Cosmic Live] Upstream socket opened model=${model}, voice=${voice}`);
+          },
+          onmessage: (msg: LiveServerMessage) => {
+            if (msg.setupComplete && !setupDone) {
+              setupDone = true;
+              if (sessionRef) {
+                finishResolve(sessionRef);
+              }
+            }
+            opts.onMessage(msg);
+          },
+          onerror: (ev: ErrorEvent) => {
+            const errMsg = ev?.message || `Live session error on ${model}`;
+            if (!settled) {
+              finishReject(new Error(errMsg));
+            } else {
+              opts.onSessionError(errMsg);
+            }
+          },
+          onclose: (ev: CloseEvent) => {
+            const closeCode = typeof ev?.code === 'number' ? ev.code : undefined;
+            const reason = ev?.reason || `Closed (code ${closeCode ?? 'unknown'})`;
+            if (!settled) {
+              finishReject(
+                new Error(`Model ${model} closed during setup (code=${closeCode ?? 'n/a'}): ${reason}`),
+              );
+            } else {
+              opts.onSessionClosed(closeCode, reason);
+            }
+          },
+        },
+      })
+      .then((sess) => {
+        sessionRef = sess;
+        if (settled) {
+          try {
+            sess.close();
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        if (setupDone) {
+          finishResolve(sess);
+        }
+      })
+      .catch((err) => {
+        finishReject(err instanceof Error ? err : new Error(String(err)));
+      });
+  });
+}
+
 async function connectGeminiLiveWithFallback(
   ai: GoogleGenAI,
   mode: CosmicMode,
   promptOptions: CosmicPromptOptions,
+  resumeHandle: string | null,
   onMessage: (message: LiveServerMessage) => void,
-  onSessionClosed: (reason: string) => void,
+  onSessionClosed: (closeCode: number | undefined, reason: string) => void,
   onSessionError: (errMsg: string) => void,
-): Promise<{ session: LiveSession; model: string; voice: string }> {
-  const voice = getVoiceNameForMode(mode);
-  const systemInstruction = buildCosmicSystemInstruction(mode, promptOptions);
+): Promise<{ session: LiveSession; model: string; voice: string; resumed: boolean }> {
   const errors: string[] = [];
 
   for (const model of LIVE_MODEL_CANDIDATES) {
-    let settled = false;
-    let sessionRef: LiveSession | null = null;
-
+    // 1. First try with requested resumeHandle (if any) + sessionResumption & compression
     try {
-      const result = await new Promise<{ session: LiveSession; model: string; voice: string }>(
-        (resolve, reject) => {
-          let setupDone = false;
-          let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
-
-          const finishResolve = (sess: LiveSession) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeout);
-            if (fallbackTimer) clearTimeout(fallbackTimer);
-            resolve({ session: sess, model, voice });
-          };
-
-          const finishReject = (err: Error) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeout);
-            if (fallbackTimer) clearTimeout(fallbackTimer);
-            try {
-              sessionRef?.close();
-            } catch {
-              // ignore
-            }
-            reject(err);
-          };
-
-          const timeout = setTimeout(() => {
-            finishReject(new Error(`Timed out waiting for setupComplete on ${model}`));
-          }, 6500);
-
-          ai.live
-            .connect({
-              model,
-              config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                  voiceConfig: {
-                    prebuiltVoiceConfig: { voiceName: voice },
-                  },
-                },
-                systemInstruction,
-                tools: [{ functionDeclarations: COSMIC_TOOL_DECLARATIONS }],
-                inputAudioTranscription: {},
-                outputAudioTranscription: {},
-              },
-              callbacks: {
-                onopen: () => {
-                  console.log(`[Cosmic Live] WebSocket opened for model=${model}, voice=${voice}`);
-                },
-                onmessage: (msg: LiveServerMessage) => {
-                  if (msg.setupComplete) {
-                    setupDone = true;
-                    if (sessionRef) {
-                      finishResolve(sessionRef);
-                    }
-                  }
-                  onMessage(msg);
-                },
-                onerror: (ev: ErrorEvent) => {
-                  const errMsg = ev?.message || `Live session error on ${model}`;
-                  if (!settled) {
-                    finishReject(new Error(errMsg));
-                  } else {
-                    onSessionError(errMsg);
-                  }
-                },
-                onclose: (ev: CloseEvent) => {
-                  const reason = ev?.reason || `Closed (code ${ev?.code ?? 'unknown'})`;
-                  if (!settled) {
-                    finishReject(new Error(`Model ${model} closed during setup: ${reason}`));
-                  } else {
-                    onSessionClosed(reason);
-                  }
-                },
-              },
-            })
-            .then((sess) => {
-              sessionRef = sess;
-              if (settled) {
-                try {
-                  sess.close();
-                } catch {
-                  // ignore
-                }
-                return;
-              }
-              if (setupDone) {
-                finishResolve(sess);
-                return;
-              }
-              // Fallback if transport skips emitting setupComplete packet
-              fallbackTimer = setTimeout(() => {
-                finishResolve(sess);
-              }, 450);
-            })
-            .catch((err) => {
-              finishReject(err instanceof Error ? err : new Error(String(err)));
-            });
-        },
-      );
-
-      return result;
+      return await attemptSingleLiveConnect(ai, model, {
+        mode,
+        promptOptions,
+        resumeHandle,
+        enableResumptionAndCompression: true,
+        onMessage,
+        onSessionClosed,
+        onSessionError,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[Cosmic Live] Candidate ${model} failed: ${msg}`);
+      console.warn(`[Cosmic Live] Candidate ${model} (resumption attempt) failed: ${msg}`);
       errors.push(`${model}: ${msg}`);
+
+      // 2. If resuming with an expired/rejected handle failed, immediately retry fresh on the same model
+      if (resumeHandle) {
+        try {
+          console.info(`[Cosmic Live] Retrying ${model} with fresh session (discarding stale handle)`);
+          return await attemptSingleLiveConnect(ai, model, {
+            mode,
+            promptOptions,
+            resumeHandle: null,
+            enableResumptionAndCompression: true,
+            onMessage,
+            onSessionClosed,
+            onSessionError,
+          });
+        } catch (freshErr) {
+          const freshMsg = freshErr instanceof Error ? freshErr.message : String(freshErr);
+          errors.push(`${model}(fresh): ${freshMsg}`);
+        }
+      }
+
+      // 3. Fallback without resumption/compression flags if a preview endpoint rejects those fields
+      if (/sessionresumption|contextwindowcompression|unknown name|unsupported/i.test(msg)) {
+        try {
+          return await attemptSingleLiveConnect(ai, model, {
+            mode,
+            promptOptions,
+            resumeHandle: null,
+            enableResumptionAndCompression: false,
+            onMessage,
+            onSessionClosed,
+            onSessionError,
+          });
+        } catch (basicErr) {
+          const basicMsg = basicErr instanceof Error ? basicErr.message : String(basicErr);
+          errors.push(`${model}(basic): ${basicMsg}`);
+        }
+      }
     }
   }
 
-  throw new Error(`Unable to connect to any Gemini Live model. Details: ${errors.join(' | ')}`);
+  throw new Error(`Unable to connect to Gemini Live. Details: ${errors.join(' | ')}`);
 }
 
 async function startServer() {
@@ -209,12 +337,81 @@ async function startServer() {
 
   app.get('/api/health', (_req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
       app: 'COSMIC AI',
+      serverTime: new Date().toISOString(),
       hasApiKey: Boolean(process.env.GEMINI_API_KEY),
       preferredModels: LIVE_MODEL_CANDIDATES,
+      features: {
+        liveKnowledge: true,
+        sessionResumption: true,
+        contextCompression: true,
+      },
     });
+  });
+
+  app.options('/api/knowledge/search', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(204).end();
+  });
+
+  const handleKnowledgeSearch = async (
+    req: express.Request,
+    res: express.Response,
+  ): Promise<void> => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
+
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      'unknown';
+
+    if (!checkKnowledgeRateLimit(clientIp)) {
+      res.status(429).json({
+        ok: false,
+        offline: false,
+        error: 'Rate limit exceeded for live knowledge search. Wait a moment and try again.',
+        items: [],
+        sources: [],
+      });
+      return;
+    }
+
+    const rawQuery =
+      req.method === 'POST'
+        ? (req.body?.query as string | undefined)
+        : (req.query.q as string | undefined);
+    const rawCategory =
+      req.method === 'POST'
+        ? (req.body?.category as string | undefined)
+        : (req.query.category as string | undefined);
+
+    if (typeof rawQuery !== 'string' || rawQuery.trim().length === 0) {
+      res.status(400).json({
+        ok: false,
+        offline: false,
+        error: 'A non-empty search query is required.',
+        items: [],
+        sources: [],
+      });
+      return;
+    }
+
+    const ai = tryCreateOptionalGenAIClient();
+    const result = await searchLiveKnowledge(rawQuery.slice(0, 200), rawCategory, { ai });
+    res.status(result.ok ? 200 : 503).json(result);
+  };
+
+  app.get('/api/knowledge/search', (req, res) => {
+    void handleKnowledgeSearch(req, res);
+  });
+  app.post('/api/knowledge/search', (req, res) => {
+    void handleKnowledgeSearch(req, res);
   });
 
   app.get(['/privacy-policy', '/privacy-policy.html'], (_req, res) => {
@@ -257,21 +454,49 @@ async function startServer() {
     }
   });
 
-  wss.on('connection', (clientWs) => {
+  wss.on('connection', (clientWs, req) => {
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      'ws-client';
+
     let activeSession: LiveSession | null = null;
     let activeMode: CosmicMode = 'normal';
+    let activeFeatures: CosmicFeaturesConfig = { ...DEFAULT_COSMIC_FEATURES };
     let isDeveloperVerified = false;
+    let latestResumeHandle: string | null = null;
     const recentAssistantOpeners: string[] = [];
     let currentInputTranscriptBuffer = '';
     let currentOutputTranscriptBuffer = '';
-    let isSwitching = false;
+    let isEstablishing = false;
     let clientClosed = false;
     let connectNonce = 0;
+    let isAlive = true;
+
+    const heartbeatTimer = setInterval(() => {
+      if (clientWs.readyState !== WebSocket.OPEN) return;
+      if (!isAlive) {
+        console.warn('[Cosmic Live] Terminating unresponsive client WebSocket (missed pong).');
+        clientWs.terminate();
+        return;
+      }
+      isAlive = false;
+      try {
+        clientWs.ping();
+      } catch {
+        // ignore
+      }
+    }, 20000);
+
+    clientWs.on('pong', () => {
+      isAlive = true;
+    });
 
     const recordAssistantOpener = (fullText: string) => {
       const cleaned = fullText.replace(/\s+/g, ' ').trim();
       if (!cleaned) return;
-      const firstSentence = cleaned.split(/(?<=[.!?])\s+/)[0]?.slice(0, 120) || cleaned.slice(0, 120);
+      const firstSentence =
+        cleaned.split(/(?<=[.!?])\s+/)[0]?.slice(0, 120) || cleaned.slice(0, 120);
       if (firstSentence.length < 8) return;
       if (recentAssistantOpeners[recentAssistantOpeners.length - 1] !== firstSentence) {
         recentAssistantOpeners.push(firstSentence);
@@ -306,34 +531,90 @@ async function startServer() {
       }
     };
 
-    const establishLiveSession = async (targetMode: CosmicMode, isModeSwitch: boolean) => {
+    const establishLiveSession = async (
+      targetMode: CosmicMode,
+      opts: {
+        isModeSwitch: boolean;
+        isAutoResume?: boolean;
+        resumeHandleOverride?: string | null;
+      },
+    ) => {
       const myNonce = ++connectNonce;
-      isSwitching = true;
+      isEstablishing = true;
       closeActiveSession();
 
       let ai: GoogleGenAI;
       try {
         ai = createGenAIClient();
       } catch (err) {
-        isSwitching = false;
+        isEstablishing = false;
         sendJson(clientWs, {
           type: 'error',
           code: 'MISSING_API_KEY',
+          retryable: false,
           message: err instanceof Error ? err.message : 'GEMINI_API_KEY missing.',
         });
         return;
       }
 
+      const handleToUse =
+        opts.isModeSwitch
+          ? null
+          : opts.resumeHandleOverride !== undefined
+            ? opts.resumeHandleOverride
+            : latestResumeHandle;
+
+      const connectStartedAt = Date.now();
+
       try {
-        const { session, model, voice } = await connectGeminiLiveWithFallback(
+        const { session, model, voice, resumed } = await connectGeminiLiveWithFallback(
           ai,
           targetMode,
           {
             developerVerified: isDeveloperVerified,
             recentResponses: recentAssistantOpeners,
+            features: activeFeatures,
           },
+          handleToUse,
           (message: LiveServerMessage) => {
             if (clientClosed || myNonce !== connectNonce) return;
+
+            if (message.sessionResumptionUpdate) {
+              const update = message.sessionResumptionUpdate;
+              if (update.resumable && update.newHandle) {
+                latestResumeHandle = update.newHandle;
+                sendJson(clientWs, {
+                  type: 'session_resumption',
+                  handle: update.newHandle,
+                  resumable: true,
+                });
+              } else if (update.resumable === false && !update.newHandle) {
+                sendJson(clientWs, {
+                  type: 'session_resumption',
+                  handle: latestResumeHandle,
+                  resumable: false,
+                });
+              }
+            }
+
+            if (message.goAway) {
+              const timeLeft = message.goAway.timeLeft || 'unknown';
+              console.warn(`[Cosmic Live] Received GoAway from Gemini (timeLeft=${timeLeft}).`);
+              sendJson(clientWs, {
+                type: 'go_away',
+                timeLeft,
+                resumable: Boolean(latestResumeHandle),
+              });
+              // Proactively hand off before server terminates socket when we hold a valid resumption handle
+              if (latestResumeHandle && !isEstablishing) {
+                void establishLiveSession(activeMode, {
+                  isModeSwitch: false,
+                  isAutoResume: true,
+                  resumeHandleOverride: latestResumeHandle,
+                });
+              }
+              return;
+            }
 
             const serverContent = message.serverContent;
             if (serverContent?.modelTurn?.parts) {
@@ -353,7 +634,7 @@ async function startServer() {
               sendJson(clientWs, { type: 'interrupted' });
             }
 
-            if (serverContent?.turnComplete || serverContent?.generationComplete) {
+            if (serverContent?.turnComplete) {
               if (currentOutputTranscriptBuffer.trim()) {
                 recordAssistantOpener(currentOutputTranscriptBuffer);
               }
@@ -364,7 +645,8 @@ async function startServer() {
 
             if (serverContent?.inputTranscription?.text) {
               const incomingChunk = serverContent.inputTranscription.text;
-              currentInputTranscriptBuffer = `${currentInputTranscriptBuffer} ${incomingChunk}`.trim();
+              currentInputTranscriptBuffer =
+                `${currentInputTranscriptBuffer} ${incomingChunk}`.trim();
               if (!isDeveloperVerified && verifyDeveloperCode(currentInputTranscriptBuffer)) {
                 promoteDeveloperRespectMode(activeSession);
               }
@@ -376,7 +658,8 @@ async function startServer() {
 
             if (serverContent?.outputTranscription?.text) {
               const outChunk = serverContent.outputTranscription.text;
-              currentOutputTranscriptBuffer = `${currentOutputTranscriptBuffer} ${outChunk}`.trim();
+              currentOutputTranscriptBuffer =
+                `${currentOutputTranscriptBuffer} ${outChunk}`.trim();
               sendJson(clientWs, {
                 type: 'output_transcript',
                 text: outChunk,
@@ -384,29 +667,108 @@ async function startServer() {
             }
 
             if (message.toolCall?.functionCalls && message.toolCall.functionCalls.length > 0) {
-              sendJson(clientWs, {
-                type: 'tool_call',
-                calls: message.toolCall.functionCalls.map((fc) => ({
-                  id: fc.id || `fc_${Date.now()}`,
-                  name: fc.name || '',
-                  args: (fc.args as Record<string, unknown>) || {},
-                })),
-              });
+              const serverToolCalls = message.toolCall.functionCalls.filter(
+                (fc) => fc.name === 'searchLiveKnowledge',
+              );
+              const clientToolCalls = message.toolCall.functionCalls.filter(
+                (fc) => fc.name !== 'searchLiveKnowledge',
+              );
+
+              for (const fc of serverToolCalls) {
+                const args = (fc.args as Record<string, unknown>) || {};
+                const query = typeof args.query === 'string' ? args.query : '';
+                const category = typeof args.category === 'string' ? args.category : 'general';
+                const callId = fc.id || `lk_${Date.now()}`;
+
+                void (async () => {
+                  const allowed = checkKnowledgeRateLimit(`ws:${clientIp}`);
+                  const searchResult = allowed
+                    ? await searchLiveKnowledge(query, category, { ai })
+                    : {
+                        ok: false,
+                        query,
+                        category,
+                        fetchedAt: new Date().toISOString(),
+                        offline: false,
+                        summary: 'Rate limit exceeded for live search. Try again in a few seconds.',
+                        items: [],
+                        sources: [],
+                        error: 'Rate limit exceeded',
+                      };
+
+                  if (clientClosed || myNonce !== connectNonce || !activeSession) return;
+
+                  sendJson(clientWs, {
+                    type: 'knowledge_sources',
+                    result: searchResult,
+                  });
+
+                  try {
+                    activeSession.sendToolResponse({
+                      functionResponses: [
+                        {
+                          id: callId,
+                          name: 'searchLiveKnowledge',
+                          response: {
+                            ok: searchResult.ok,
+                            offline: searchResult.offline,
+                            fetchedAt: searchResult.fetchedAt,
+                            category: searchResult.category,
+                            summary: searchResult.summary,
+                            items: searchResult.items.map((it) => ({
+                              headline: it.headline,
+                              source: it.source,
+                              date: it.dateLabel,
+                              snippet: it.snippet,
+                              corroboratedBy: it.corroboratedBy,
+                            })),
+                            error: searchResult.error ?? null,
+                          },
+                        },
+                      ],
+                    });
+                  } catch (toolErr) {
+                    console.error('[Cosmic Live] Failed sending searchLiveKnowledge response:', toolErr);
+                  }
+                })();
+              }
+
+              if (clientToolCalls.length > 0) {
+                sendJson(clientWs, {
+                  type: 'tool_call',
+                  calls: clientToolCalls.map((fc) => ({
+                    id: fc.id || `fc_${Date.now()}`,
+                    name: fc.name || '',
+                    args: (fc.args as Record<string, unknown>) || {},
+                  })),
+                });
+              }
             }
           },
-          (reason: string) => {
-            if (clientClosed || myNonce !== connectNonce || isSwitching) return;
+          (closeCode: number | undefined, reason: string) => {
+            if (clientClosed || myNonce !== connectNonce || isEstablishing) return;
             activeSession = null;
+            const classification = classifyLiveError(reason, closeCode);
+            console.warn(
+              `[Cosmic Live] Upstream session closed code=${closeCode ?? 'unknown'} reason="${reason}" resumable=${Boolean(latestResumeHandle)}`,
+            );
             sendJson(clientWs, {
               type: 'session_closed',
+              closeCode: closeCode ?? null,
               reason,
+              code: classification.code,
+              retryable: classification.retryable,
+              resumeHandle: latestResumeHandle,
             });
           },
           (errMsg: string) => {
             if (clientClosed || myNonce !== connectNonce) return;
+            const classification = classifyLiveError(errMsg);
+            console.error(`[Cosmic Live] Upstream session error: ${errMsg}`);
             sendJson(clientWs, {
               type: 'error',
-              code: 'LIVE_SESSION_ERROR',
+              code: classification.code,
+              retryable: classification.retryable,
               message: errMsg,
             });
           },
@@ -423,17 +785,21 @@ async function startServer() {
 
         activeSession = session;
         activeMode = targetMode;
-        isSwitching = false;
+        isEstablishing = false;
 
         sendJson(clientWs, {
-          type: isModeSwitch ? 'mode_updated' : 'connected',
+          type: opts.isModeSwitch ? 'mode_updated' : 'connected',
           mode: activeMode,
           model,
           voice,
+          resumed,
+          autoResumed: Boolean(opts.isAutoResume),
+          elapsedMs: Date.now() - connectStartedAt,
           developerVerified: isDeveloperVerified,
+          resumeHandle: latestResumeHandle,
         });
 
-        if (isModeSwitch && activeMode === 'badmash') {
+        if (opts.isModeSwitch && activeMode === 'badmash') {
           try {
             session.sendRealtimeInput({ text: COSMIC_BADMASH_ENTRANCE_CUE });
           } catch (cueErr) {
@@ -442,11 +808,16 @@ async function startServer() {
         }
       } catch (err) {
         if (clientClosed || myNonce !== connectNonce) return;
-        isSwitching = false;
+        isEstablishing = false;
+        const message = err instanceof Error ? err.message : 'Failed to connect to Gemini Live.';
+        const classification = classifyLiveError(message);
+        console.error(`[Cosmic Live] Connect attempt failed (${classification.code}): ${message}`);
         sendJson(clientWs, {
           type: 'error',
-          code: 'CONNECT_FAILED',
-          message: err instanceof Error ? err.message : 'Failed to connect to Gemini Live.',
+          code: classification.code,
+          retryable: classification.retryable,
+          message,
+          elapsedMs: Date.now() - connectStartedAt,
         });
       }
     };
@@ -459,34 +830,66 @@ async function startServer() {
         sendJson(clientWs, {
           type: 'error',
           code: 'BAD_MESSAGE',
+          retryable: false,
           message: 'Invalid JSON payload received by /live WebSocket.',
         });
         return;
       }
 
+      if (msg.type === 'ping') {
+        isAlive = true;
+        sendJson(clientWs, { type: 'pong', serverTime: Date.now() });
+        return;
+      }
+
+      if (msg.features) {
+        activeFeatures = resolveCosmicFeatures(msg.features);
+      }
+
       if (msg.type === 'connect') {
         const mode: CosmicMode = msg.badmashMode ? 'badmash' : 'normal';
-        void establishLiveSession(mode, false);
+        const handleOverride =
+          typeof msg.resumeHandle === 'string' && msg.resumeHandle.trim().length > 0
+            ? msg.resumeHandle.trim()
+            : null;
+        void establishLiveSession(mode, {
+          isModeSwitch: false,
+          resumeHandleOverride: handleOverride,
+        });
         return;
       }
 
       if (msg.type === 'set_mode') {
         const nextMode: CosmicMode = msg.badmashMode ? 'badmash' : 'normal';
         if (nextMode !== activeMode || !activeSession) {
-          void establishLiveSession(nextMode, true);
+          latestResumeHandle = null;
+          void establishLiveSession(nextMode, { isModeSwitch: true });
+        }
+        return;
+      }
+
+      if (msg.type === 'update_features') {
+        if (activeSession && !isEstablishing) {
+          latestResumeHandle = null;
+          void establishLiveSession(activeMode, {
+            isModeSwitch: false,
+            isAutoResume: false,
+            resumeHandleOverride: null,
+          });
         }
         return;
       }
 
       if (msg.type === 'disconnect') {
         connectNonce++;
-        isSwitching = false;
+        isEstablishing = false;
+        latestResumeHandle = null;
         closeActiveSession();
         sendJson(clientWs, { type: 'disconnected' });
         return;
       }
 
-      if (!activeSession || isSwitching) {
+      if (!activeSession || isEstablishing) {
         return;
       }
 
@@ -536,12 +939,14 @@ async function startServer() {
     });
 
     clientWs.on('close', () => {
+      clearInterval(heartbeatTimer);
       clientClosed = true;
       connectNonce++;
       closeActiveSession();
     });
 
     clientWs.on('error', (err) => {
+      clearInterval(heartbeatTimer);
       console.warn('[Cosmic Live] Client WebSocket error:', err.message);
       clientClosed = true;
       connectNonce++;

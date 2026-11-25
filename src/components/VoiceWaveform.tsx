@@ -21,7 +21,8 @@ export function VoiceWaveform({ mode, cosmicState, audioLevelRef }: VoiceWavefor
       const level = audioLevelRef.current || 0;
       const isSpeaking = cosmicState === 'SPEAKING';
       const isListening = cosmicState === 'LISTENING';
-      const isConnecting = cosmicState === 'CONNECTING';
+      const isConnecting =
+        cosmicState === 'CONNECTING' || cosmicState === 'RECONNECTING';
 
       for (let i = 0; i < BAR_WEIGHTS.length; i++) {
         const el = barsRef.current[i];
@@ -51,11 +52,13 @@ export function VoiceWaveform({ mode, cosmicState, audioLevelRef }: VoiceWavefor
   const barColorClass =
     cosmicState === 'ERROR'
       ? 'bg-red-400'
-      : mode === 'badmash'
-        ? cosmicState === 'SPEAKING'
-          ? 'bg-orange-400'
-          : 'bg-purple-400'
-        : 'bg-sky-400';
+      : cosmicState === 'RECONNECTING'
+        ? 'bg-amber-400'
+        : mode === 'badmash'
+          ? cosmicState === 'SPEAKING'
+            ? 'bg-fuchsia-400'
+            : 'bg-purple-400'
+          : 'bg-sky-400';
 
   return (
     <div

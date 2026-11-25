@@ -428,7 +428,7 @@ export function CosmicKnightCanvas({
         activeRig.upperBody.rotation.x = 0;
         activeRig.leftArmGroup.rotation.z = 0;
         activeRig.rightArmGroup.rotation.x = 0;
-      } else if (currentState === 'CONNECTING') {
+      } else if (currentState === 'CONNECTING' || currentState === 'RECONNECTING') {
         activeRig.upperBody.rotation.y = Math.sin(elapsed * 2.8) * 0.04;
         activeRig.upperBody.rotation.x = 0;
         activeRig.headGroup.rotation.x = -0.04;
