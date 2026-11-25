@@ -1,18 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  Check,
   ExternalLink,
   Flame,
   Globe,
+  MessageSquare,
   Mic,
   MicOff,
   Power,
   RotateCcw,
   Send,
-  Settings2,
   ShieldCheck,
   Sparkles,
   X,
 } from 'lucide-react';
+import { AdminAccessModal } from './components/AdminAccessModal.tsx';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
 import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
@@ -25,7 +27,9 @@ export default function App() {
     cosmicState,
     isMicMuted,
     isDeveloperVerified,
+    isAdminAuthenticated,
     features,
+    pendingWhatsAppDraft,
     errorMessage,
     micNotice,
     backendUrl,
@@ -43,6 +47,10 @@ export default function App() {
     updateFeatures,
     runLiveKnowledgeSearch,
     clearLiveKnowledge,
+    confirmWhatsAppDraft,
+    dismissWhatsAppDraft,
+    verifyAdminAccess,
+    logoutAdmin,
     retryMicrophone,
     sendTextMessage,
     testSpeaker,
@@ -55,7 +63,9 @@ export default function App() {
   const [cameraResetTick, setCameraResetTick] = useState(0);
   const [fallbackDraft, setFallbackDraft] = useState('');
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [adminDrawerRequested, setAdminDrawerRequested] = useState(false);
+
+  const brandTapTimesRef = useRef<number[]>([]);
 
   const isBadmash = mode === 'badmash';
   const isLive =
@@ -68,6 +78,30 @@ export default function App() {
     document.body.dataset.cosmicState = cosmicState;
     document.body.dataset.cosmicMode = mode;
   }, [cosmicState, mode]);
+
+  // Hidden keyboard shortcut (Ctrl+Shift+D or Alt+Shift+A) for protected developer/admin console
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') || (e.altKey && e.shiftKey && e.key.toLowerCase() === 'a')) {
+        e.preventDefault();
+        setAdminDrawerRequested((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // Hidden 7-tap gesture on the COSMIC AI title for mobile/APK developer/admin access
+  const handleHiddenBrandTap = () => {
+    const now = Date.now();
+    const recent = brandTapTimesRef.current.filter((t) => now - t < 2500);
+    recent.push(now);
+    brandTapTimesRef.current = recent;
+    if (recent.length >= 7) {
+      brandTapTimesRef.current = [];
+      setAdminDrawerRequested(true);
+    }
+  };
 
   const latestTranscript = transcripts[transcripts.length - 1];
 
@@ -83,10 +117,13 @@ export default function App() {
         />
       </main>
 
-      {/* Top 3-Zone Header Bar (Respects Android WindowInsets cleanly) */}
+      {/* Top 3-Zone Header Bar (No exposed internal settings or engine controls) */}
       <header className="pointer-events-none fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-2 px-3.5 py-3 sm:px-6">
         <div className="pointer-events-auto flex items-center gap-2">
-          <span className="font-display text-base font-bold tracking-wider text-white whitespace-nowrap shrink-0 sm:text-xl">
+          <span
+            onClick={handleHiddenBrandTap}
+            className="font-display text-base font-bold tracking-wider text-white whitespace-nowrap shrink-0 sm:text-xl"
+          >
             COSMIC AI
           </span>
         </div>
@@ -142,21 +179,6 @@ export default function App() {
         </div>
 
         <div className="pointer-events-auto flex items-center gap-1.5 shrink-0 sm:gap-2">
-          {/* Settings, Optional Features & Live Knowledge */}
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            data-testid="settings-features-button"
-            aria-label="Cosmic Settings and Optional Features"
-            title="Settings, Optional Features & Live News"
-            className="flex h-9 items-center gap-1.5 rounded-lg border border-white/12 bg-[#0d101b]/90 px-2.5 text-xs font-semibold text-slate-200 transition-colors hover:border-white/25 hover:text-white sm:h-10 sm:px-3"
-          >
-            <Settings2
-              className={`h-4 w-4 ${isBadmash ? 'text-purple-400' : 'text-sky-400'}`}
-            />
-            <span className="hidden sm:inline">Settings</span>
-          </button>
-
           {/* Privacy Policy */}
           <button
             type="button"
@@ -183,28 +205,41 @@ export default function App() {
       </header>
 
       <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
-      <SettingsFeaturesModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        mode={mode}
-        cosmicState={cosmicState}
-        features={features}
-        diagnostics={diagnostics}
-        speakerTestResult={speakerTestResult}
-        liveKnowledge={liveKnowledge}
-        bridgeRuntime={bridgeRuntime}
-        backendUrl={backendUrl}
-        transcripts={transcripts}
-        actionLogs={actionLogs}
-        diagnosticLogs={diagnosticLogs}
-        onUpdateFeatures={updateFeatures}
-        onSearchKnowledge={runLiveKnowledgeSearch}
-        onTestSpeaker={testSpeaker}
-        onRunSafeAction={runManualSafeAction}
-        onUpdateBackendUrl={updateBackendUrl}
+
+      {/* Protected Developer / Admin Interface (never rendered or unlocked for normal users) */}
+      <AdminAccessModal
+        open={adminDrawerRequested && !isAdminAuthenticated}
+        onClose={() => setAdminDrawerRequested(false)}
+        onVerify={verifyAdminAccess}
       />
 
-      {/* Unified Bottom Stack: Alerts, Live Knowledge Sources, Mic Fallback & Caption sit cleanly ABOVE Dock */}
+      {isAdminAuthenticated && (
+        <SettingsFeaturesModal
+          open={adminDrawerRequested}
+          onClose={() => {
+            setAdminDrawerRequested(false);
+            logoutAdmin();
+          }}
+          mode={mode}
+          cosmicState={cosmicState}
+          features={features}
+          diagnostics={diagnostics}
+          speakerTestResult={speakerTestResult}
+          liveKnowledge={liveKnowledge}
+          bridgeRuntime={bridgeRuntime}
+          backendUrl={backendUrl}
+          transcripts={transcripts}
+          actionLogs={actionLogs}
+          diagnosticLogs={diagnosticLogs}
+          onUpdateFeatures={updateFeatures}
+          onSearchKnowledge={runLiveKnowledgeSearch}
+          onTestSpeaker={testSpeaker}
+          onRunSafeAction={runManualSafeAction}
+          onUpdateBackendUrl={updateBackendUrl}
+        />
+      )}
+
+      {/* Unified Bottom Stack: Alerts, Pending WhatsApp Draft, Live Sources, Mic Fallback & Caption */}
       <div className="pointer-events-none fixed inset-x-0 bottom-3 z-20 flex flex-col items-center gap-2.5 px-3">
         {cosmicState === 'RECONNECTING' && (
           <div
@@ -260,6 +295,44 @@ export default function App() {
           </div>
         )}
 
+        {pendingWhatsAppDraft && (
+          <div
+            role="status"
+            data-testid="whatsapp-draft-confirmation"
+            className="pointer-events-auto w-full max-w-md rounded-xl border border-emerald-400/40 bg-[#0b1813]/95 px-3.5 py-2.5 text-xs shadow-xl"
+          >
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 font-semibold text-emerald-300">
+                <MessageSquare className="h-3.5 w-3.5" />
+                Message Prepared · {pendingWhatsAppDraft.contactName}
+              </span>
+              <span className="font-mono text-[10px] text-emerald-400 uppercase">
+                Confirm Send
+              </span>
+            </div>
+            <p className="mb-2.5 rounded-md border border-white/10 bg-black/30 px-2.5 py-1.5 text-slate-100">
+              {pendingWhatsAppDraft.message}
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={dismissWhatsAppDraft}
+                className="rounded-md border border-white/15 px-2.5 py-1 font-medium text-slate-300 hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmWhatsAppDraft()}
+                className="flex items-center gap-1 rounded-md border border-emerald-400/60 bg-emerald-500/25 px-3 py-1 font-semibold text-emerald-100 hover:bg-emerald-500/35"
+              >
+                <Check className="h-3.5 w-3.5" />
+                Open WhatsApp
+              </button>
+            </div>
+          </div>
+        )}
+
         {liveKnowledge && liveKnowledge.items.length > 0 && (
           <div
             data-testid="live-knowledge-card"
@@ -268,7 +341,7 @@ export default function App() {
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className="flex items-center gap-1.5 font-semibold text-sky-300">
                 <Globe className="h-3.5 w-3.5" />
-                Live Grounded Sources ({liveKnowledge.items[0].dateLabel})
+                Verified Sources ({liveKnowledge.items[0].dateLabel})
               </span>
               <button
                 type="button"
@@ -288,7 +361,9 @@ export default function App() {
                   rel="noopener noreferrer"
                   className="inline-flex max-w-full items-center gap-1.5 truncate rounded-md border border-white/12 bg-[#14192b] px-2.5 py-1 text-[11px] text-slate-200 hover:border-sky-400/50 hover:text-white"
                 >
-                  <span className="truncate">{item.source}: {item.headline}</span>
+                  <span className="truncate">
+                    {item.source}: {item.headline}
+                  </span>
                   <ExternalLink className="h-3 w-3 shrink-0 text-sky-400" />
                 </a>
               ))}

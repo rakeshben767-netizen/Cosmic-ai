@@ -223,10 +223,17 @@ export function buildCosmicSystemInstruction(
     COSMIC_MULTILINGUAL_RULE,
     COSMIC_CRITICAL_THINKING_RULE,
     COSMIC_EMOTIONAL_INTELLIGENCE_RULE,
-    `DEVICE ACTION RULES:
-- Only use the declared device tools (openWhatsApp, openApp, openUrl, makeCall, callContact) and live knowledge tool (searchLiveKnowledge).
-- Wait for the tool response before telling the user whether an action or search succeeded or failed.
-- Never claim a call, app launch, contact lookup, or live web search succeeded if the tool returned ok: false.`,
+    `DEVICE ACTION & FAST VOICE AUTOMATION RULES:
+- Available tools: searchLiveKnowledge, openApp, openWhatsApp, openYouTubeSearch, openUrl, findContact, draftWhatsAppMessage, sendWhatsAppMessage, makeCall, callContact.
+- Fast App Launch: When the user clearly asks to open an ordinary supported app ("Open YouTube", "YouTube kholo", "WhatsApp open karo", "Instagram chalao", "Chrome kholo", "Open Google", "Open my camera", "Open settings"), call openApp or openWhatsApp IMMEDIATELY—never ask "Are you sure you want to open YouTube?".
+- YouTube Search: When the user asks to search or play something on YouTube ("Open YouTube and search Free Fire", "YouTube kholo aur free fire gameplay search karo", "Cosmic, YouTube pe funny videos laga"), extract the exact clean query and call openYouTubeSearch({ query }) directly—never open the YouTube homepage instead.
+- WhatsApp Contact & Message Flow:
+  1. For "Open WhatsApp" / "WhatsApp kholo", call openWhatsApp() immediately.
+  2. For preparing/sending a WhatsApp message in ANY language ("Papa ko WhatsApp pe hi likho" -> contactName: "Papa", message: "Hi"; "Papa ko message bhejo: main ghar aa raha hoon" -> contactName: "Papa", message: "main ghar aa raha hoon"; "Papa la WhatsApp var hi pathav", "Abba ko message bhejo", "WhatsApp pe Mummy ko bolna main aa raha hoon"), extract the intended contactName and exact message and call draftWhatsAppMessage({ contactName, message }) FIRST. Note: in Hinglish commands like "hi likho" / "hello likho" / "hi bhejo", "hi" is the English greeting "Hi".
+  3. If contact lookup returns multiple matches, ask which contact the user meant. If not found or permission is needed, tell the user honestly—NEVER guess phone numbers or contact names.
+  4. When draftWhatsAppMessage returns ok: true (state: message_prepared), speak the prepared contact and message clearly and ask for confirmation before sending. ONLY after the user explicitly confirms, call sendWhatsAppMessage({ contactName, message, confirmed: true }).
+  5. Always distinguish states honestly: "message prepared", "WhatsApp opened", "message sent", and "message delivered". Never claim a message was delivered unless the tool explicitly reports delivery.
+- Tool Errors: Wait for the tool response before confirming. If any tool returns ok: false, NEVER pretend it succeeded—explain the real error naturally in Cosmic's personality (varying your wording rather than repeating a canned line).`,
   ];
 
   if (options.developerVerified) {
@@ -277,7 +284,7 @@ export const COSMIC_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'openWhatsApp',
     description:
-      'Opens WhatsApp on the user device or web browser when the user asks to open or launch WhatsApp.',
+      'Immediately opens WhatsApp on the user device or web browser when the user asks to open WhatsApp.',
     parameters: {
       type: Type.OBJECT,
       properties: {},
@@ -286,16 +293,31 @@ export const COSMIC_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'openApp',
     description:
-      'Opens an allowlisted common application by friendly app name (e.g. YouTube, Instagram, WhatsApp, Spotify, Google Maps, Chrome, Gmail, Telegram, Camera, Settings, Calendar, Clock, Calculator). Never pass raw arbitrary package names.',
+      'Immediately opens an allowlisted application by friendly app name (YouTube, WhatsApp, Instagram, Chrome, Google, Camera, Settings, Spotify, Google Maps, Gmail, Telegram, Calendar). Never pass raw Android package names.',
     parameters: {
       type: Type.OBJECT,
       properties: {
         appName: {
           type: Type.STRING,
-          description: 'Friendly name of the application to open, e.g. "YouTube" or "Instagram".',
+          description: 'Friendly name of the application to open, e.g. "YouTube", "Chrome", "Google", "Camera", or "Settings".',
         },
       },
       required: ['appName'],
+    },
+  },
+  {
+    name: 'openYouTubeSearch',
+    description:
+      'Opens YouTube directly with a validated search query (https://www.youtube.com/results?search_query=...) preferring the installed YouTube app with browser fallback. Use whenever the user asks to search, play, or find videos/songs on YouTube.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: 'Clean YouTube search query extracted from user speech, e.g. "Free Fire gameplay" or "latest Bollywood songs".',
+        },
+      },
+      required: ['query'],
     },
   },
   {
@@ -311,6 +333,63 @@ export const COSMIC_TOOL_DECLARATIONS: FunctionDeclaration[] = [
         },
       },
       required: ['url'],
+    },
+  },
+  {
+    name: 'findContact',
+    description:
+      'Searches device contacts (on Android APK) by exact or partial name and reports whether zero, one, or multiple matching contacts exist. Never guess phone numbers.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        contactName: {
+          type: Type.STRING,
+          description: 'Contact name spoken by the user, e.g. "Papa", "Mummy", "Abba", or "Rahul".',
+        },
+      },
+      required: ['contactName'],
+    },
+  },
+  {
+    name: 'draftWhatsAppMessage',
+    description:
+      'Resolves the intended contact safely and prepares an exact WhatsApp message draft awaiting user confirmation before opening WhatsApp. Always call this before sendWhatsAppMessage.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        contactName: {
+          type: Type.STRING,
+          description: 'Contact name to resolve, e.g. "Papa", "Mummy", or "Rahul".',
+        },
+        message: {
+          type: Type.STRING,
+          description: 'Exact message text to prepare, e.g. "Hi" or "main ghar aa raha hoon".',
+        },
+      },
+      required: ['contactName', 'message'],
+    },
+  },
+  {
+    name: 'sendWhatsAppMessage',
+    description:
+      'Opens the resolved WhatsApp chat with the prepared message ONLY after the user explicitly confirmed the prepared draft (confirmed: true). Reports exact state (whatsapp_opened vs message_prepared).',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        contactName: {
+          type: Type.STRING,
+          description: 'Confirmed contact name.',
+        },
+        message: {
+          type: Type.STRING,
+          description: 'Confirmed message text.',
+        },
+        confirmed: {
+          type: Type.BOOLEAN,
+          description: 'Must be true only after the user explicitly confirmed sending the prepared message.',
+        },
+      },
+      required: ['contactName', 'message', 'confirmed'],
     },
   },
   {

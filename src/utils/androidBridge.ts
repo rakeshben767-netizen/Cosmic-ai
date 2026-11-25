@@ -1,23 +1,35 @@
+import type { ContactLookupMatch, WhatsAppMessageState } from '../types/cosmic.ts';
+
 export interface NativeActionResponse {
   ok: boolean;
   message: string;
-  matches?: Array<{ name: string; phoneNumber: string }>;
+  matches?: ContactLookupMatch[];
+  status?: string;
+  state?: WhatsAppMessageState;
+  url?: string;
+  target?: string;
 }
 
 export interface CosmicNativeBridge {
   openWhatsApp(): Promise<NativeActionResponse>;
   openApp(appName: string): Promise<NativeActionResponse>;
+  openYouTubeSearch(query: string): Promise<NativeActionResponse>;
   openUrl(url: string): Promise<NativeActionResponse>;
   makeCall(phoneNumber: string): Promise<NativeActionResponse>;
   callContact(contactName: string): Promise<NativeActionResponse>;
+  findContact(contactName: string): Promise<NativeActionResponse>;
+  openWhatsAppChat(phoneNumber: string, message: string): Promise<NativeActionResponse>;
 }
 
 interface RawAndroidWebViewBridge {
   openWhatsApp?: () => string;
   openApp?: (appName: string) => string;
+  openYouTubeSearch?: (query: string) => string;
   openUrl?: (url: string) => string;
   makeCall?: (phoneNumber: string) => string;
   callContact?: (contactName: string) => string;
+  findContact?: (contactName: string) => string;
+  openWhatsAppChat?: (phoneNumber: string, message: string) => string;
 }
 
 interface RawCapacitorWindow {
@@ -40,6 +52,10 @@ function safeParseBridgeJson(raw: string, fallbackAction: string): NativeActionR
           ? parsed.message
           : `${fallbackAction} returned an empty status.`,
       matches: Array.isArray(parsed.matches) ? parsed.matches : undefined,
+      status: typeof parsed.status === 'string' ? parsed.status : undefined,
+      state: parsed.state,
+      url: typeof parsed.url === 'string' ? parsed.url : undefined,
+      target: typeof parsed.target === 'string' ? parsed.target : undefined,
     };
   } catch (err) {
     return {
@@ -72,6 +88,12 @@ export function getCosmicNativeBridge(): CosmicNativeBridge | null {
         }
         return safeParseBridgeJson(webViewBridge.openApp(appName), 'openApp');
       },
+      async openYouTubeSearch(query: string) {
+        if (!webViewBridge.openYouTubeSearch) {
+          return { ok: false, message: 'openYouTubeSearch is not exposed by Android bridge.' };
+        }
+        return safeParseBridgeJson(webViewBridge.openYouTubeSearch(query), 'openYouTubeSearch');
+      },
       async openUrl(url: string) {
         if (!webViewBridge.openUrl) {
           return { ok: false, message: 'openUrl is not exposed by Android bridge.' };
@@ -89,6 +111,21 @@ export function getCosmicNativeBridge(): CosmicNativeBridge | null {
           return { ok: false, message: 'callContact is not exposed by Android bridge.' };
         }
         return safeParseBridgeJson(webViewBridge.callContact(contactName), 'callContact');
+      },
+      async findContact(contactName: string) {
+        if (!webViewBridge.findContact) {
+          return { ok: false, message: 'findContact is not exposed by Android bridge.' };
+        }
+        return safeParseBridgeJson(webViewBridge.findContact(contactName), 'findContact');
+      },
+      async openWhatsAppChat(phoneNumber: string, message: string) {
+        if (!webViewBridge.openWhatsAppChat) {
+          return { ok: false, message: 'openWhatsAppChat is not exposed by Android bridge.' };
+        }
+        return safeParseBridgeJson(
+          webViewBridge.openWhatsAppChat(phoneNumber, message),
+          'openWhatsAppChat',
+        );
       },
     };
   }

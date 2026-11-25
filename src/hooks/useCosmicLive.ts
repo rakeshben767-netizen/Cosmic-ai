@@ -8,6 +8,8 @@ import {
   type CosmicState,
   type DiagnosticLogEntry,
   type LiveKnowledgeSearchResult,
+  type PendingWhatsAppDraft,
+  type SafeActionName,
   type ToolCallPayload,
   type ToolResponsePayload,
   type TranscriptEntry,
@@ -21,7 +23,7 @@ import {
   resampleFloat32,
   uint8ToBase64,
 } from '../utils/pcmAudio.ts';
-import { executeSafeToolCall } from '../utils/safeActions.ts';
+import { executeSafeToolCall, sanitizeActionArgsForLog } from '../utils/safeActions.ts';
 import { detectBridgeEnvironment, getCosmicNativeBridge } from '../utils/androidBridge.ts';
 import {
   computeReconnectDelayMs,
@@ -131,15 +133,8 @@ function getInitialBackendUrl(): string {
 }
 
 function getInitialFeatures(): CosmicFeaturesConfig {
-  if (typeof window === 'undefined') return { ...DEFAULT_COSMIC_FEATURES };
-  try {
-    const raw = window.localStorage.getItem(FEATURES_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_COSMIC_FEATURES };
-    const parsed = JSON.parse(raw) as Partial<CosmicFeaturesConfig>;
-    return { ...DEFAULT_COSMIC_FEATURES, ...parsed };
-  } catch {
-    return { ...DEFAULT_COSMIC_FEATURES };
-  }
+  // Always keep internal Featured/engine systems enabled in background for normal users
+  return { ...DEFAULT_COSMIC_FEATURES };
 }
 
 export function resolveHttpBaseUrl(customBackendUrl: string): string {
@@ -172,7 +167,10 @@ export function useCosmicLive() {
   const [cosmicState, setCosmicState] = useState<CosmicState>('IDLE');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
   const [isDeveloperVerified, setIsDeveloperVerified] = useState<boolean>(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
   const [features, setFeatures] = useState<CosmicFeaturesConfig>(() => getInitialFeatures());
+  const [pendingWhatsAppDraft, setPendingWhatsAppDraft] =
+    useState<PendingWhatsAppDraft | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [micNotice, setMicNotice] = useState<string | null>(null);
   const [backendUrl, setBackendUrlState] = useState<string>(() => getInitialBackendUrl());
@@ -222,7 +220,7 @@ export function useCosmicLive() {
   const micProcessorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const micSilenceGainRef = useRef<GainNode | null>(null);
 
-  // Connection lifecycle & Gemini Live resumption refs
+  // Connection lifecycle, idempotency & Gemini Live resumption refs
   const nextStartTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
@@ -235,6 +233,8 @@ export function useCosmicLive() {
   const pingIntervalRef = useRef<number | null>(null);
   const connectAttemptFnRef = useRef<((isRetry: boolean) => Promise<void>) | null>(null);
   const lastHealthErrorRef = useRef<string | null>(null);
+  const recentToolFingerprintsRef = useRef<Map<string, number>>(new Map());
+  const seenToolCallIdsRef = useRef<Set<string>>(new Set());
 
   const meterTimerRef = useRef<number | null>(null);
   const bridgeEnv = useRef(detectBridgeEnvironment());
@@ -918,28 +918,92 @@ export function useCosmicLive() {
       if (msg.type === 'tool_call' && Array.isArray(msg.calls)) {
         const bridge = getCosmicNativeBridge();
         const responses: ToolResponsePayload[] = [];
+        const now = Date.now();
 
         for (const call of msg.calls) {
-          addLog('info', 'tool', `Executing tool ${call.name}(${JSON.stringify(call.args)})`);
-          const { response, logEntry } = await executeSafeToolCall(
-            call.name,
-            call.args || {},
-            bridge,
-          );
-          setActionLogs((prev) => [logEntry, ...prev].slice(0, 30));
+          const callName = call.name as SafeActionName;
+          const safeArgs = call.args || {};
+          const sanitizedArgsStr = JSON.stringify(sanitizeActionArgsForLog(callName, safeArgs));
+
+          // Idempotency / duplicate-action prevention within 8 seconds
+          if (seenToolCallIdsRef.current.has(call.id)) {
+            addLog('warn', 'tool', `Duplicate tool call ignored id=${call.id} (${call.name})`);
+            continue;
+          }
+          seenToolCallIdsRef.current.add(call.id);
+          if (seenToolCallIdsRef.current.size > 100) {
+            const firstId = seenToolCallIdsRef.current.values().next().value;
+            if (firstId) seenToolCallIdsRef.current.delete(firstId);
+          }
+
+          const dedupFingerprint = `${call.name}:${JSON.stringify(safeArgs)}`;
+          const prevExecAt = recentToolFingerprintsRef.current.get(dedupFingerprint);
+          const dedupWindowMs =
+            call.name === 'sendWhatsAppMessage' ||
+            call.name === 'openApp' ||
+            call.name === 'openYouTubeSearch'
+              ? 6000
+              : 0;
+          if (dedupWindowMs > 0 && prevExecAt && now - prevExecAt < dedupWindowMs) {
+            addLog('warn', 'tool', `Prevented duplicate execution for ${call.name}`);
+            responses.push({
+              id: call.id,
+              name: call.name,
+              response: {
+                ok: true,
+                deduplicated: true,
+                message: `Action ${call.name} was already executed a moment ago.`,
+              },
+            });
+            continue;
+          }
+
+          addLog('info', 'tool', `Tool call received: ${call.name}(${sanitizedArgsStr})`);
+          const startedAt = Date.now();
+
+          let result: Awaited<ReturnType<typeof executeSafeToolCall>>;
+          try {
+            result = await Promise.race([
+              executeSafeToolCall(call.name, safeArgs, bridge),
+              new Promise<never>((_, reject) => {
+                window.setTimeout(() => reject(new Error(`Tool ${call.name} timed out.`)), 6000);
+              }),
+            ]);
+          } catch (toolErr) {
+            const errMsg = toolErr instanceof Error ? toolErr.message : String(toolErr);
+            addLog('error', 'tool', `Tool execution failed (${call.name}): ${errMsg}`);
+            responses.push({
+              id: call.id,
+              name: call.name,
+              response: { ok: false, message: errMsg, error: errMsg },
+            });
+            continue;
+          }
+
+          const durationMs = Date.now() - startedAt;
+          if (result.logEntry.ok && dedupWindowMs > 0) {
+            recentToolFingerprintsRef.current.set(dedupFingerprint, Date.now());
+          }
+          if (result.pendingDraft) {
+            setPendingWhatsAppDraft(result.pendingDraft);
+          } else if (result.clearDraft) {
+            setPendingWhatsAppDraft(null);
+          }
+
+          setActionLogs((prev) => [result.logEntry, ...prev].slice(0, 30));
           addLog(
-            logEntry.ok ? 'info' : 'warn',
+            result.logEntry.ok ? 'info' : 'warn',
             'tool',
-            `Tool ${call.name} -> ${logEntry.ok ? 'OK' : 'FAILED'}: ${logEntry.message}`,
+            `Tool ${call.name} ${result.logEntry.ok ? 'completed' : 'failed'} (${durationMs}ms): ${result.logEntry.message}`,
           );
           responses.push({
             id: call.id,
             name: call.name,
-            response,
+            response: result.response,
           });
         }
 
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
+        if (responses.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({
               type: 'tool_response',
@@ -1604,12 +1668,84 @@ export function useCosmicLive() {
     [addLog],
   );
 
+  const confirmWhatsAppDraft = useCallback(async () => {
+    const draft = pendingWhatsAppDraft;
+    if (!draft) return;
+    const bridge = getCosmicNativeBridge();
+    const res = await executeSafeToolCall(
+      'sendWhatsAppMessage',
+      {
+        contactName: draft.contactName,
+        message: draft.message,
+        confirmed: true,
+      },
+      bridge,
+    );
+    setActionLogs((prev) => [res.logEntry, ...prev].slice(0, 30));
+    addLog(
+      res.logEntry.ok ? 'info' : 'warn',
+      'tool',
+      `WhatsApp draft confirmed -> ${res.logEntry.message}`,
+    );
+    if (res.logEntry.ok) {
+      setPendingWhatsAppDraft(null);
+    }
+    if (wsRef.current?.readyState === WebSocket.OPEN && isSessionReadyRef.current) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'text',
+          text: res.logEntry.ok
+            ? `[System Action Result: User confirmed WhatsApp draft for ${draft.contactName}. ${res.logEntry.message}]`
+            : `[System Action Result: WhatsApp draft could not be opened: ${res.logEntry.message}]`,
+        }),
+      );
+    }
+  }, [addLog, pendingWhatsAppDraft]);
+
+  const dismissWhatsAppDraft = useCallback(() => {
+    setPendingWhatsAppDraft(null);
+    addLog('info', 'tool', 'User cancelled pending WhatsApp draft.');
+  }, [addLog]);
+
+  const verifyAdminAccess = useCallback(
+    async (passcode: string): Promise<{ ok: boolean; error?: string }> => {
+      const base = resolveHttpBaseUrl(backendUrlRef.current);
+      try {
+        const res = await fetch(`${base}/api/admin/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passcode }),
+        });
+        const data = (await res.json()) as { ok?: boolean; token?: string; error?: string };
+        if (res.ok && data.ok && data.token) {
+          setAdminToken(data.token);
+          setIsDeveloperVerified(true);
+          addLog('info', 'bridge', 'Protected developer/admin interface unlocked.');
+          return { ok: true };
+        }
+        return { ok: false, error: data.error || 'Invalid developer passcode.' };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : 'Unable to reach admin verification server.',
+        };
+      }
+    },
+    [addLog],
+  );
+
+  const logoutAdmin = useCallback(() => {
+    setAdminToken(null);
+  }, []);
+
   return {
     mode,
     cosmicState,
     isMicMuted,
     isDeveloperVerified,
+    isAdminAuthenticated: Boolean(adminToken),
     features,
+    pendingWhatsAppDraft,
     errorMessage,
     micNotice,
     backendUrl,
@@ -1627,6 +1763,10 @@ export function useCosmicLive() {
     updateFeatures,
     runLiveKnowledgeSearch,
     clearLiveKnowledge: () => setLiveKnowledge(null),
+    confirmWhatsAppDraft,
+    dismissWhatsAppDraft,
+    verifyAdminAccess,
+    logoutAdmin,
     retryMicrophone,
     sendTextMessage,
     testSpeaker,

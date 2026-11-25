@@ -44,9 +44,33 @@ export const DEFAULT_COSMIC_FEATURES: CosmicFeaturesConfig = {
 export type SafeActionName =
   | 'openWhatsApp'
   | 'openApp'
+  | 'openYouTubeSearch'
   | 'openUrl'
   | 'makeCall'
-  | 'callContact';
+  | 'callContact'
+  | 'findContact'
+  | 'draftWhatsAppMessage'
+  | 'sendWhatsAppMessage';
+
+export type WhatsAppMessageState =
+  | 'message_prepared'
+  | 'whatsapp_opened'
+  | 'message_sent'
+  | 'message_delivered';
+
+export interface ContactLookupMatch {
+  name: string;
+  phoneNumber: string;
+}
+
+export interface PendingWhatsAppDraft {
+  id: string;
+  contactName: string;
+  phoneNumber: string;
+  message: string;
+  state: 'message_prepared';
+  createdAt: number;
+}
 
 export interface TranscriptEntry {
   id: string;

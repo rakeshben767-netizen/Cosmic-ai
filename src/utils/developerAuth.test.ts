@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyDeveloperCode } from './developerAuth.ts';
+import {
+  issueAdminSessionToken,
+  verifyAdminPasscode,
+  verifyAdminSessionToken,
+  verifyDeveloperCode,
+} from './developerAuth.ts';
 
 describe('developerAuth verification', () => {
   it('verifies the exact formatted verification code and spoken/embedded variants', () => {
@@ -32,5 +37,15 @@ describe('developerAuth verification', () => {
         process.env.COSMIC_DEV_VERIFICATION_CODE = prev;
       }
     }
+  });
+
+  it('verifies admin passcodes and validates signed HMAC session tokens', () => {
+    assert.equal(verifyAdminPasscode('1147 1 4'), true);
+    assert.equal(verifyAdminPasscode('wrong-passcode'), false);
+
+    const { token } = issueAdminSessionToken(60_000);
+    assert.equal(verifyAdminSessionToken(token), true);
+    assert.equal(verifyAdminSessionToken(`${token}tampered`), false);
+    assert.equal(verifyAdminSessionToken('invalid'), false);
   });
 });

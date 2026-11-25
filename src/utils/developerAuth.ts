@@ -125,3 +125,64 @@ export function verifyDeveloperCode(input: string): boolean {
 
   return false;
 }
+
+const ADMIN_TOKEN_SECRET =
+  process.env.COSMIC_ADMIN_SESSION_SECRET?.trim() || crypto.randomBytes(32).toString('hex');
+
+export function verifyAdminPasscode(passcode: string): boolean {
+  if (typeof passcode !== 'string') return false;
+  const trimmed = passcode.trim();
+  if (!trimmed || trimmed.length > 240) return false;
+
+  const customAdmin = process.env.COSMIC_ADMIN_PASSCODE?.trim();
+  if (customAdmin && customAdmin.length > 0) {
+    const a = sha256Buffer(trimmed);
+    const b = sha256Buffer(customAdmin);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+
+  return verifyDeveloperCode(trimmed);
+}
+
+export function issueAdminSessionToken(ttlMs = 30 * 60 * 1000): {
+  token: string;
+  expiresAt: number;
+} {
+  const expiresAt = Date.now() + ttlMs;
+  const payload = Buffer.from(JSON.stringify({ role: 'admin', exp: expiresAt })).toString(
+    'base64url',
+  );
+  const sig = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(payload)
+    .digest('base64url');
+  return { token: `${payload}.${sig}`, expiresAt };
+}
+
+export function verifyAdminSessionToken(token: string | undefined | null): boolean {
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split('.');
+  if (parts.length !== 2) return false;
+  const [payload, sig] = parts;
+  if (!payload || !sig) return false;
+
+  const expectedSig = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(payload)
+    .digest('base64url');
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return false;
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      role?: string;
+      exp?: number;
+    };
+    return decoded.role === 'admin' && typeof decoded.exp === 'number' && decoded.exp > Date.now();
+  } catch {
+    return false;
+  }
+}

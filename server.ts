@@ -20,7 +20,12 @@ import {
   resolveCosmicFeatures,
   type CosmicPromptOptions,
 } from './src/utils/cosmicPrompts.ts';
-import { verifyDeveloperCode } from './src/utils/developerAuth.ts';
+import {
+  issueAdminSessionToken,
+  verifyAdminPasscode,
+  verifyAdminSessionToken,
+  verifyDeveloperCode,
+} from './src/utils/developerAuth.ts';
 import {
   checkKnowledgeRateLimit,
   searchLiveKnowledge,
@@ -414,6 +419,85 @@ async function startServer() {
     void handleKnowledgeSearch(req, res);
   });
 
+  // Protected Admin/Developer Authentication (never uses wildcard CORS)
+  const adminAttemptBuckets = new Map<string, number[]>();
+  const resolveAdminCorsOrigin = (req: express.Request): string | null => {
+    const origin = req.headers.origin;
+    if (!origin) return null;
+    if (origin === 'https://appassets.androidplatform.net') return origin;
+    const host = req.headers.host;
+    if (host && (origin === `https://${host}` || origin === `http://${host}`)) {
+      return origin;
+    }
+    return null;
+  };
+
+  app.options(['/api/admin/verify', '/api/admin/status'], (req, res) => {
+    const allowedOrigin = resolveAdminCorsOrigin(req);
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.status(204).end();
+  });
+
+  app.post('/api/admin/verify', (req, res) => {
+    const allowedOrigin = resolveAdminCorsOrigin(req);
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      'unknown';
+    const now = Date.now();
+    const attempts = (adminAttemptBuckets.get(clientIp) ?? []).filter(
+      (ts) => now - ts < 5 * 60 * 1000,
+    );
+    if (attempts.length >= 10) {
+      adminAttemptBuckets.set(clientIp, attempts);
+      res.status(429).json({ ok: false, error: 'Too many verification attempts. Wait 5 minutes.' });
+      return;
+    }
+
+    const passcode = typeof req.body?.passcode === 'string' ? req.body.passcode : '';
+    if (!verifyAdminPasscode(passcode)) {
+      attempts.push(now);
+      adminAttemptBuckets.set(clientIp, attempts);
+      res.status(401).json({ ok: false, error: 'Invalid developer passcode.' });
+      return;
+    }
+
+    const sessionToken = issueAdminSessionToken();
+    res.json({ ok: true, token: sessionToken.token, expiresAt: sessionToken.expiresAt });
+  });
+
+  app.get('/api/admin/status', (req, res) => {
+    const allowedOrigin = resolveAdminCorsOrigin(req);
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+
+    const authHeader = req.headers.authorization || '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    if (!verifyAdminSessionToken(bearer)) {
+      res.status(401).json({ ok: false, authorized: false });
+      return;
+    }
+    res.json({
+      ok: true,
+      authorized: true,
+      featuresEnabledInBackground: true,
+    });
+  });
+
   app.get(['/privacy-policy', '/privacy-policy.html'], (_req, res) => {
     const prodFile = path.resolve(__dirname, 'dist', 'privacy-policy.html');
     const publicFile = path.resolve(__dirname, 'public', 'privacy-policy.html');
@@ -681,6 +765,8 @@ async function startServer() {
                 const callId = fc.id || `lk_${Date.now()}`;
 
                 void (async () => {
+                  const startedAt = Date.now();
+                  console.info(`[Cosmic Live Tool] searchLiveKnowledge started category=${category}`);
                   const allowed = checkKnowledgeRateLimit(`ws:${clientIp}`);
                   const searchResult = allowed
                     ? await searchLiveKnowledge(query, category, { ai })
@@ -697,6 +783,10 @@ async function startServer() {
                       };
 
                   if (clientClosed || myNonce !== connectNonce || !activeSession) return;
+
+                  console.info(
+                    `[Cosmic Live Tool] searchLiveKnowledge completed ok=${searchResult.ok} items=${searchResult.items.length} elapsed=${Date.now() - startedAt}ms`,
+                  );
 
                   sendJson(clientWs, {
                     type: 'knowledge_sources',
@@ -728,12 +818,17 @@ async function startServer() {
                       ],
                     });
                   } catch (toolErr) {
-                    console.error('[Cosmic Live] Failed sending searchLiveKnowledge response:', toolErr);
+                    console.error('[Cosmic Live Tool] Failed sending searchLiveKnowledge response:', toolErr);
                   }
                 })();
               }
 
               if (clientToolCalls.length > 0) {
+                console.info(
+                  `[Cosmic Live Tool] Forwarding client tool calls: ${clientToolCalls
+                    .map((fc) => fc.name || 'unknown')
+                    .join(', ')}`,
+                );
                 sendJson(clientWs, {
                   type: 'tool_call',
                   calls: clientToolCalls.map((fc) => ({

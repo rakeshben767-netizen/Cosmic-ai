@@ -60,11 +60,28 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     assert.match(verifiedPrompt, /Second smart comeback/);
   });
 
-  it('keeps normal mode free of extreme badmash roast engine rules and declares searchLiveKnowledge tool', () => {
+  it('keeps normal mode free of extreme badmash roast engine rules and declares all fast voice tools', () => {
     const normalPrompt = buildCosmicSystemInstruction('normal');
     assert.doesNotMatch(normalPrompt, /ROAST BATTLE ENGINE \(ENABLED\)/i);
+    assert.match(normalPrompt, /openYouTubeSearch/);
     assert.match(COSMIC_BADMASH_ENTRANCE_CUE, /Purple Knight/i);
-    const searchTool = COSMIC_TOOL_DECLARATIONS.find((t) => t.name === 'searchLiveKnowledge');
-    assert.ok(searchTool);
+    const expectedTools = [
+      'searchLiveKnowledge',
+      'openApp',
+      'openWhatsApp',
+      'openYouTubeSearch',
+      'openUrl',
+      'findContact',
+      'draftWhatsAppMessage',
+      'sendWhatsAppMessage',
+      'makeCall',
+      'callContact',
+    ];
+    for (const toolName of expectedTools) {
+      assert.ok(
+        COSMIC_TOOL_DECLARATIONS.find((t) => t.name === toolName),
+        `Missing tool declaration: ${toolName}`,
+      );
+    }
   });
 });

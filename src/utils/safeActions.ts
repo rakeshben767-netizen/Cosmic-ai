@@ -1,4 +1,8 @@
-import type { ActionLogEntry, SafeActionName } from '../types/cosmic.ts';
+import type {
+  ActionLogEntry,
+  PendingWhatsAppDraft,
+  SafeActionName,
+} from '../types/cosmic.ts';
 import type { CosmicNativeBridge } from './androidBridge.ts';
 
 export interface AllowlistedAppSpec {
@@ -68,9 +72,16 @@ export const ALLOWLISTED_APPS: AllowlistedAppSpec[] = [
     webUrl: 'https://www.google.com',
   },
   {
+    id: 'google',
+    displayName: 'Google',
+    aliases: ['google', 'google app', 'google search'],
+    androidPackage: 'com.google.android.googlequicksearchbox',
+    webUrl: 'https://www.google.com',
+  },
+  {
     id: 'camera',
     displayName: 'Camera',
-    aliases: ['camera'],
+    aliases: ['camera', 'cam'],
     androidPackage: 'android.media.action.IMAGE_CAPTURE',
     webUrl: null,
     requiresNativeBridge: true,
@@ -78,7 +89,7 @@ export const ALLOWLISTED_APPS: AllowlistedAppSpec[] = [
   {
     id: 'settings',
     displayName: 'Settings',
-    aliases: ['settings', 'device settings'],
+    aliases: ['settings', 'setting', 'device settings', 'phone settings'],
     androidPackage: 'android.settings.SETTINGS',
     webUrl: null,
     requiresNativeBridge: true,
@@ -122,6 +133,28 @@ export function resolveAppTarget(rawAppName: string): AppResolutionResult {
     };
   }
   return { allowed: true, app: matched };
+}
+
+export type YouTubeSearchValidationResult =
+  | { valid: true; query: string; url: string }
+  | { valid: false; reason: string };
+
+export function buildYouTubeSearchUrl(rawQuery: string): YouTubeSearchValidationResult {
+  if (!rawQuery || typeof rawQuery !== 'string') {
+    return { valid: false, reason: 'YouTube search query is required.' };
+  }
+  const cleanQuery = rawQuery.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleanQuery) {
+    return { valid: false, reason: 'YouTube search query cannot be empty.' };
+  }
+  if (cleanQuery.length > 160) {
+    return { valid: false, reason: 'YouTube search query must be 160 characters or fewer.' };
+  }
+  return {
+    valid: true,
+    query: cleanQuery,
+    url: `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`,
+  };
 }
 
 export type UrlValidationResult =
@@ -188,6 +221,27 @@ export function validatePhoneNumber(rawPhone: string): PhoneValidationResult {
   };
 }
 
+export function sanitizeActionArgsForLog(
+  action: SafeActionName,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (k === 'phoneNumber') {
+      sanitized[k] = '[redacted]';
+    } else if (k === 'message') {
+      const len = typeof v === 'string' ? v.trim().length : 0;
+      sanitized[k] = `[redacted len=${len}]`;
+    } else {
+      sanitized[k] = v;
+    }
+  }
+  if (action === 'draftWhatsAppMessage' || action === 'sendWhatsAppMessage') {
+    sanitized.redactedSensitiveContent = true;
+  }
+  return sanitized;
+}
+
 function triggerBrowserLink(url: string, newTab: boolean): boolean {
   if (typeof document === 'undefined') return false;
   try {
@@ -214,6 +268,8 @@ export async function executeSafeToolCall(
 ): Promise<{
   response: Record<string, unknown>;
   logEntry: ActionLogEntry;
+  pendingDraft?: PendingWhatsAppDraft | null;
+  clearDraft?: boolean;
 }> {
   const timestamp = Date.now();
   const id = `act_${timestamp}_${Math.random().toString(36).slice(2, 7)}`;
@@ -225,18 +281,21 @@ export async function executeSafeToolCall(
     via: ActionLogEntry['via'],
     extra: Record<string, unknown> = {},
     fallbackUrl?: string,
+    draftControl?: { pendingDraft?: PendingWhatsAppDraft | null; clearDraft?: boolean },
   ) => ({
     response: { ok, message, via, ...extra },
     logEntry: {
       id,
       action,
-      args,
+      args: sanitizeActionArgsForLog(action, args),
       ok,
       message,
       fallbackUrl,
       timestamp,
       via,
     },
+    pendingDraft: draftControl?.pendingDraft,
+    clearDraft: draftControl?.clearDraft,
   });
 
   if (name === 'openWhatsApp') {
@@ -250,7 +309,7 @@ export async function executeSafeToolCall(
       'openWhatsApp',
       triggered,
       triggered
-        ? 'Opened WhatsApp web link (https://wa.me/). If your browser blocked the new tab, tap the link in the Actions log.'
+        ? 'Opened WhatsApp web link (https://wa.me/).'
         : 'Browser environment could not launch WhatsApp automatically.',
       'browser',
       { url: waUrl },
@@ -295,6 +354,42 @@ export async function executeSafeToolCall(
     );
   }
 
+  if (name === 'openYouTubeSearch') {
+    const rawQuery = typeof args.query === 'string' ? args.query : '';
+    const validated = buildYouTubeSearchUrl(rawQuery);
+    if (!validated.valid) {
+      return makeResult('openYouTubeSearch', false, validated.reason, 'validation');
+    }
+
+    if (bridge) {
+      const res = await bridge.openYouTubeSearch(validated.query);
+      return makeResult(
+        'openYouTubeSearch',
+        res.ok,
+        res.message,
+        'android-bridge',
+        {
+          query: validated.query,
+          url: res.url ?? validated.url,
+          target: res.target ?? 'youtube_app',
+        },
+        res.url ?? validated.url,
+      );
+    }
+
+    const triggered = triggerBrowserLink(validated.url, true);
+    return makeResult(
+      'openYouTubeSearch',
+      triggered,
+      triggered
+        ? `Opened YouTube search for "${validated.query}".`
+        : `Could not open browser for YouTube search "${validated.query}".`,
+      'browser',
+      { query: validated.query, url: validated.url, target: 'browser' },
+      validated.url,
+    );
+  }
+
   if (name === 'openUrl') {
     const rawUrl = typeof args.url === 'string' ? args.url : '';
     const validated = validateSafeUrl(rawUrl);
@@ -332,7 +427,7 @@ export async function executeSafeToolCall(
     if (bridge) {
       const res = await bridge.makeCall(validated.normalized);
       return makeResult('makeCall', res.ok, res.message, 'android-bridge', {
-        phoneNumber: validated.normalized,
+        requiresUserConfirmation: false,
       });
     }
 
@@ -341,10 +436,10 @@ export async function executeSafeToolCall(
       'makeCall',
       triggered,
       triggered
-        ? `Opened device dialer prompt for ${validated.normalized} (user confirmation required to place the call).`
-        : `Unable to open dialer for ${validated.normalized} in this environment.`,
+        ? 'Opened device dialer prompt (user confirmation required to place the call).'
+        : 'Unable to open phone dialer in this environment.',
       'browser',
-      { phoneNumber: validated.normalized, requiresUserConfirmation: true },
+      { requiresUserConfirmation: true },
       validated.telUri,
     );
   }
@@ -368,8 +463,181 @@ export async function executeSafeToolCall(
     const res = await bridge.callContact(contactName);
     return makeResult('callContact', res.ok, res.message, 'android-bridge', {
       contactName,
-      matches: res.matches ?? undefined,
+      matchCount: res.matches?.length ?? (res.ok ? 1 : 0),
+      matchNames: res.matches?.map((m) => m.name),
     });
+  }
+
+  if (name === 'findContact') {
+    const contactName = typeof args.contactName === 'string' ? args.contactName.trim() : '';
+    if (!contactName) {
+      return makeResult('findContact', false, 'Contact name is required.', 'validation');
+    }
+
+    if (!bridge) {
+      return makeResult(
+        'findContact',
+        false,
+        `Device contacts for "${contactName}" are only accessible in the Cosmic AI Android APK. Cannot guess contact phone numbers in a web browser.`,
+        'browser',
+        { contactName, status: 'requires_native_bridge', requiresNativeBridge: true },
+      );
+    }
+
+    const res = await bridge.findContact(contactName);
+    return makeResult('findContact', res.ok, res.message, 'android-bridge', {
+      contactName,
+      status: res.status ?? (res.ok ? 'contact_resolved' : 'not_found'),
+      matchCount: res.matches?.length ?? 0,
+      matchNames: res.matches?.map((m) => m.name) ?? [],
+    });
+  }
+
+  if (name === 'draftWhatsAppMessage') {
+    const contactName = typeof args.contactName === 'string' ? args.contactName.trim() : '';
+    const message = typeof args.message === 'string' ? args.message.trim() : '';
+    if (!contactName) {
+      return makeResult('draftWhatsAppMessage', false, 'Contact name is required.', 'validation');
+    }
+    if (!message) {
+      return makeResult('draftWhatsAppMessage', false, 'Message text is required.', 'validation');
+    }
+
+    if (!bridge) {
+      return makeResult(
+        'draftWhatsAppMessage',
+        false,
+        `Cannot look up "${contactName}" in device contacts from a standard web browser. Use the Cosmic AI Android APK to resolve contacts and prepare WhatsApp messages safely.`,
+        'browser',
+        {
+          contactName,
+          state: 'message_prepared',
+          requiresNativeBridge: true,
+        },
+      );
+    }
+
+    const lookup = await bridge.findContact(contactName);
+    const matched = lookup.matches && lookup.matches.length === 1 ? lookup.matches[0] : null;
+    if (!lookup.ok || !matched) {
+      return makeResult('draftWhatsAppMessage', false, lookup.message, 'android-bridge', {
+        contactName,
+        status: lookup.status ?? 'not_found',
+        matchNames: lookup.matches?.map((m) => m.name) ?? [],
+      });
+    }
+
+    const draft: PendingWhatsAppDraft = {
+      id: `wa_${timestamp}`,
+      contactName: matched.name,
+      phoneNumber: matched.phoneNumber,
+      message,
+      state: 'message_prepared',
+      createdAt: timestamp,
+    };
+
+    return makeResult(
+      'draftWhatsAppMessage',
+      true,
+      `Prepared WhatsApp message for "${matched.name}". Ask the user to confirm before opening WhatsApp to send.`,
+      'android-bridge',
+      {
+        draftId: draft.id,
+        contactName: matched.name,
+        message,
+        state: 'message_prepared',
+        messagePrepared: true,
+        whatsappOpened: false,
+        messageSent: false,
+        messageDelivered: false,
+        requiresUserConfirmation: true,
+      },
+      undefined,
+      { pendingDraft: draft },
+    );
+  }
+
+  if (name === 'sendWhatsAppMessage') {
+    const contactName = typeof args.contactName === 'string' ? args.contactName.trim() : '';
+    const message = typeof args.message === 'string' ? args.message.trim() : '';
+    const confirmed = args.confirmed === true;
+
+    if (!contactName) {
+      return makeResult('sendWhatsAppMessage', false, 'Contact name is required.', 'validation');
+    }
+    if (!message) {
+      return makeResult('sendWhatsAppMessage', false, 'Message text is required.', 'validation');
+    }
+
+    if (!bridge) {
+      return makeResult(
+        'sendWhatsAppMessage',
+        false,
+        `Cannot resolve "${contactName}" or send WhatsApp messages from a standard web browser. Use the Cosmic AI Android APK.`,
+        'browser',
+        { contactName, requiresNativeBridge: true },
+      );
+    }
+
+    const lookup = await bridge.findContact(contactName);
+    const matched = lookup.matches && lookup.matches.length === 1 ? lookup.matches[0] : null;
+    if (!lookup.ok || !matched) {
+      return makeResult('sendWhatsAppMessage', false, lookup.message, 'android-bridge', {
+        contactName,
+        status: lookup.status ?? 'not_found',
+        matchNames: lookup.matches?.map((m) => m.name) ?? [],
+      });
+    }
+
+    if (!confirmed) {
+      const draft: PendingWhatsAppDraft = {
+        id: `wa_${timestamp}`,
+        contactName: matched.name,
+        phoneNumber: matched.phoneNumber,
+        message,
+        state: 'message_prepared',
+        createdAt: timestamp,
+      };
+      return makeResult(
+        'sendWhatsAppMessage',
+        false,
+        `Confirmation required before opening WhatsApp for "${matched.name}". State: message_prepared.`,
+        'validation',
+        {
+          draftId: draft.id,
+          contactName: matched.name,
+          message,
+          state: 'message_prepared',
+          messagePrepared: true,
+          whatsappOpened: false,
+          messageSent: false,
+          messageDelivered: false,
+          requiresUserConfirmation: true,
+        },
+        undefined,
+        { pendingDraft: draft },
+      );
+    }
+
+    const chatRes = await bridge.openWhatsAppChat(matched.phoneNumber, message);
+    return makeResult(
+      'sendWhatsAppMessage',
+      chatRes.ok,
+      chatRes.ok
+        ? `Opened WhatsApp chat for "${matched.name}" with the prepared message ready to send.`
+        : chatRes.message,
+      'android-bridge',
+      {
+        contactName: matched.name,
+        state: chatRes.ok ? 'whatsapp_opened' : 'message_prepared',
+        messagePrepared: true,
+        whatsappOpened: chatRes.ok,
+        messageSent: false,
+        messageDelivered: false,
+      },
+      undefined,
+      chatRes.ok ? { clearDraft: true } : undefined,
+    );
   }
 
   return makeResult(

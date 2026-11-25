@@ -193,19 +193,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestInitialPermissions() {
-        val needed = mutableListOf<String>()
         if (!hasRecordAudio()) {
-            needed.add(Manifest.permission.RECORD_AUDIO)
+            requestPermissionsLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
         }
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.READ_CONTACTS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            needed.add(Manifest.permission.READ_CONTACTS)
-        }
-        if (needed.isNotEmpty()) {
-            requestPermissionsLauncher.launch(needed.toTypedArray())
+    }
+
+    fun requestContactsPermissionOnDemand() {
+        runOnUiThread {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_CONTACTS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissionsLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS))
+            }
         }
     }
 
