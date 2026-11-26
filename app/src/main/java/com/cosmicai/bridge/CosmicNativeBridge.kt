@@ -29,7 +29,13 @@ class CosmicNativeBridge(private val context: Context) {
         "telegram" to "org.telegram.messenger",
         "chrome" to "com.android.chrome",
         "google" to "com.google.android.googlequicksearchbox",
-        "calendar" to "com.google.android.calendar"
+        "calendar" to "com.google.android.calendar",
+        "gallery" to "com.google.android.apps.photos",
+        "photos" to "com.google.android.apps.photos",
+        "google photos" to "com.google.android.apps.photos",
+        "clock" to "com.google.android.deskclock",
+        "alarm" to "com.google.android.deskclock",
+        "timer" to "com.google.android.deskclock"
     )
 
     private fun jsonResult(

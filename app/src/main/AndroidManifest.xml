@@ -26,6 +26,8 @@
         <package android:name="com.android.chrome" />
         <package android:name="com.google.android.calendar" />
         <package android:name="com.google.android.googlequicksearchbox" />
+        <package android:name="com.google.android.apps.photos" />
+        <package android:name="com.google.android.deskclock" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />

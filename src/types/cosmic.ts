@@ -82,6 +82,21 @@ export interface TranscriptEntry {
   mode: CosmicMode;
 }
 
+export interface ConversationSessionRecord {
+  id: string;
+  startedAt: number;
+  updatedAt: number;
+  mode: CosmicMode;
+  entries: TranscriptEntry[];
+}
+
+export interface ConversationMemoryItem {
+  speaker: 'user' | 'cosmic';
+  text: string;
+  mode?: CosmicMode;
+  timestamp?: number;
+}
+
 export interface ActionLogEntry {
   id: string;
   action: SafeActionName;

@@ -60,9 +60,26 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     assert.match(verifiedPrompt, /Second smart comeback/);
   });
 
-  it('keeps normal mode free of extreme badmash roast engine rules and declares all fast voice tools', () => {
+  it('enforces brutal Mumbai Tapori Don rules without polite support openers and supports persistent conversation memory', () => {
+    const badmashPrompt = buildCosmicSystemInstruction('badmash', {
+      conversationMemory: [
+        { speaker: 'user', text: 'My favorite team is Mumbai Indians', mode: 'normal' },
+        { speaker: 'cosmic', text: 'Noted Bhidu, Mumbai Indians!', mode: 'badmash' },
+      ],
+    });
+    assert.match(badmashPrompt, /BRUTAL MUMBAI TAPORI DON/i);
+    assert.match(badmashPrompt, /STRICTLY FORBIDDEN CUSTOMER-SUPPORT OPENERS/i);
+    assert.match(badmashPrompt, /Sure, I can help you/i);
+    assert.match(badmashPrompt, /PERSISTENT CONVERSATION MEMORY/i);
+    assert.match(badmashPrompt, /My favorite team is Mumbai Indians/);
+    assert.doesNotMatch(badmashPrompt, /1147/);
+  });
+
+  it('keeps normal mode simple, sweet, and free of extreme badmash roast engine rules and declares all fast voice tools', () => {
     const normalPrompt = buildCosmicSystemInstruction('normal');
+    assert.match(normalPrompt, /Simple, sweet, calm, friendly, intelligent/i);
     assert.doesNotMatch(normalPrompt, /ROAST BATTLE ENGINE \(ENABLED\)/i);
+    assert.doesNotMatch(normalPrompt, /BRUTAL MUMBAI TAPORI DON/i);
     assert.match(normalPrompt, /openYouTubeSearch/);
     assert.match(COSMIC_BADMASH_ENTRANCE_CUE, /Purple Cosmic Ball/i);
     assert.doesNotMatch(COSMIC_BADMASH_ENTRANCE_CUE, /\bboss\b/i);

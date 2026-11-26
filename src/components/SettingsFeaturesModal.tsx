@@ -15,6 +15,7 @@ import {
 import type {
   ActionLogEntry,
   AudioDiagnosticsSnapshot,
+  ConversationSessionRecord,
   CosmicFeaturesConfig,
   CosmicMode,
   CosmicState,
@@ -43,6 +44,7 @@ interface SettingsFeaturesModalProps {
   bridgeRuntime: { hasNativeBridge: boolean; runtimeLabel: string };
   backendUrl: string;
   transcripts: TranscriptEntry[];
+  recentSessions: ConversationSessionRecord[];
   actionLogs: ActionLogEntry[];
   diagnosticLogs: DiagnosticLogEntry[];
   onUpdateFeatures: (patch: Partial<CosmicFeaturesConfig>) => void;
@@ -50,6 +52,7 @@ interface SettingsFeaturesModalProps {
   onTestSpeaker: () => void;
   onRunSafeAction: (name: string, args: Record<string, unknown>) => void;
   onUpdateBackendUrl: (url: string) => boolean;
+  onClearRecentSessions?: () => void;
 }
 
 const OPTIONAL_FEATURE_ITEMS: Array<{
@@ -136,6 +139,7 @@ export function SettingsFeaturesModal({
   bridgeRuntime,
   backendUrl,
   transcripts,
+  recentSessions,
   actionLogs,
   diagnosticLogs,
   onUpdateFeatures,
@@ -143,6 +147,7 @@ export function SettingsFeaturesModal({
   onTestSpeaker,
   onRunSafeAction,
   onUpdateBackendUrl,
+  onClearRecentSessions,
 }: SettingsFeaturesModalProps) {
   const [section, setSection] = useState<'features' | 'knowledge' | 'diagnostics'>('features');
   const [searchQuery, setSearchQuery] = useState('');
@@ -172,11 +177,13 @@ export function SettingsFeaturesModal({
           bridgeRuntime={bridgeRuntime}
           backendUrl={backendUrl}
           transcripts={transcripts}
+          recentSessions={recentSessions}
           actionLogs={actionLogs}
           diagnosticLogs={diagnosticLogs}
           onTestSpeaker={onTestSpeaker}
           onRunSafeAction={onRunSafeAction}
           onUpdateBackendUrl={onUpdateBackendUrl}
+          onClearRecentSessions={onClearRecentSessions}
         />
       </div>
     );

@@ -3,6 +3,7 @@ import {
   DEFAULT_COSMIC_FEATURES,
   type ActionLogEntry,
   type AudioDiagnosticsSnapshot,
+  type ConversationSessionRecord,
   type CosmicFeaturesConfig,
   type CosmicMode,
   type CosmicState,
@@ -14,6 +15,14 @@ import {
   type ToolResponsePayload,
   type TranscriptEntry,
 } from '../types/cosmic.ts';
+import {
+  buildMemoryContextEntries,
+  clearRecentSessionsStorage,
+  loadRecentSessions,
+  mergeTranscriptEntryList,
+  saveRecentSessions,
+  upsertSessionTranscriptEntry,
+} from '../utils/conversationHistory.ts';
 import {
   base64ToUint8,
   clampSpeechRate,
@@ -103,7 +112,7 @@ function buildVoiceTextureCurve(roughnessMix: number): Float32Array<ArrayBuffer>
 }
 
 const NORMAL_CURVE = buildVoiceTextureCurve(0);
-const BADMASH_HUSKY_CURVE = buildVoiceTextureCurve(0.05);
+const BADMASH_HUSKY_CURVE = buildVoiceTextureCurve(0.08);
 
 const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
@@ -191,6 +200,9 @@ export function useCosmicLive() {
   const [micNotice, setMicNotice] = useState<string | null>(null);
   const [backendUrl, setBackendUrlState] = useState<string>(() => getInitialBackendUrl());
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const [recentSessions, setRecentSessions] = useState<ConversationSessionRecord[]>(() =>
+    loadRecentSessions(),
+  );
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
   const [speakerTestResult, setSpeakerTestResult] = useState<string | null>(null);
@@ -220,6 +232,10 @@ export function useCosmicLive() {
   const isMicMutedRef = useRef<boolean>(isMicMuted);
   const featuresRef = useRef<CosmicFeaturesConfig>(features);
   const backendUrlRef = useRef<string>(backendUrl);
+  const transcriptsRef = useRef<TranscriptEntry[]>(transcripts);
+  const recentSessionsRef = useRef<ConversationSessionRecord[]>(recentSessions);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const activeSessionStartedAtRef = useRef<number>(Date.now());
   const audioLevelRef = useRef<number>(0);
 
   // Persistent single AudioContext + Badmash Husky/Bass EQ -> Compressor -> GainNode -> Analyser -> destination
@@ -267,13 +283,13 @@ export function useCosmicLive() {
     }
     if (ctx && ctx.state !== 'closed') {
       if (bassFilter) {
-        bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 5.2 : 0, ctx.currentTime, 0.06);
+        bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 6.0 : 0, ctx.currentTime, 0.06);
       }
       if (presenceFilter) {
-        presenceFilter.gain.setTargetAtTime(mode === 'badmash' ? 2.6 : 0, ctx.currentTime, 0.06);
+        presenceFilter.gain.setTargetAtTime(mode === 'badmash' ? 3.2 : 0, ctx.currentTime, 0.06);
       }
       if (gainNode) {
-        gainNode.gain.setTargetAtTime(mode === 'badmash' ? 1.06 : 1.0, ctx.currentTime, 0.06);
+        gainNode.gain.setTargetAtTime(mode === 'badmash' ? 1.08 : 1.0, ctx.currentTime, 0.06);
       }
     }
   }, [mode]);
@@ -293,6 +309,14 @@ export function useCosmicLive() {
   useEffect(() => {
     backendUrlRef.current = backendUrl;
   }, [backendUrl]);
+
+  useEffect(() => {
+    transcriptsRef.current = transcripts;
+  }, [transcripts]);
+
+  useEffect(() => {
+    recentSessionsRef.current = recentSessions;
+  }, [recentSessions]);
 
   const addLog = useCallback(
     (
@@ -323,29 +347,43 @@ export function useCosmicLive() {
     (speaker: TranscriptEntry['speaker'], text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      const now = Date.now();
+      if (!activeSessionIdRef.current) {
+        activeSessionIdRef.current = `sess_${now}_${Math.random().toString(36).slice(2, 7)}`;
+        activeSessionStartedAtRef.current = now;
+      }
+      const entry: TranscriptEntry = {
+        id: `tr_${now}_${Math.random().toString(36).slice(2, 6)}`,
+        speaker,
+        text: trimmed,
+        timestamp: now,
+        mode: modeRef.current,
+      };
       setTranscripts((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.speaker === speaker && Date.now() - last.timestamp < 3000) {
-          const merged = `${last.text} ${trimmed}`.replace(/\s+/g, ' ').trim();
-          return [
-            ...prev.slice(0, -1),
-            { ...last, text: merged, timestamp: Date.now(), mode: modeRef.current },
-          ];
-        }
-        return [
-          ...prev.slice(-24),
-          {
-            id: `tr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            speaker,
-            text: trimmed,
-            timestamp: Date.now(),
-            mode: modeRef.current,
-          },
-        ];
+        const next = mergeTranscriptEntryList(prev, entry, 25);
+        transcriptsRef.current = next;
+        return next;
+      });
+      const sessionId = activeSessionIdRef.current;
+      const startedAt = activeSessionStartedAtRef.current;
+      setRecentSessions((prev) => {
+        const next = saveRecentSessions(
+          upsertSessionTranscriptEntry(prev, sessionId, entry, startedAt),
+        );
+        recentSessionsRef.current = next;
+        return next;
       });
     },
     [],
   );
+
+  const clearRecentSessions = useCallback(() => {
+    clearRecentSessionsStorage();
+    recentSessionsRef.current = [];
+    setRecentSessions([]);
+    activeSessionIdRef.current = null;
+    addLog('info', 'gemini', 'Cleared saved recent conversation sessions.');
+  }, [addLog]);
 
   const clearReconnectTimers = useCallback(() => {
     if (reconnectTimerRef.current !== null) {
@@ -371,14 +409,14 @@ export function useCosmicLive() {
       ctx = new AudioCtx({ latencyHint: 'interactive' });
       const bassFilter = ctx.createBiquadFilter();
       bassFilter.type = 'lowshelf';
-      bassFilter.frequency.value = 145;
-      bassFilter.gain.value = modeRef.current === 'badmash' ? 5.2 : 0;
+      bassFilter.frequency.value = 135;
+      bassFilter.gain.value = modeRef.current === 'badmash' ? 6.0 : 0;
 
       const presenceFilter = ctx.createBiquadFilter();
       presenceFilter.type = 'peaking';
-      presenceFilter.frequency.value = 2600;
-      presenceFilter.Q.value = 1.1;
-      presenceFilter.gain.value = modeRef.current === 'badmash' ? 2.6 : 0;
+      presenceFilter.frequency.value = 2450;
+      presenceFilter.Q.value = 1.15;
+      presenceFilter.gain.value = modeRef.current === 'badmash' ? 3.2 : 0;
 
       const roughnessShaper = ctx.createWaveShaper();
       roughnessShaper.oversample = '2x';
@@ -392,7 +430,7 @@ export function useCosmicLive() {
       compressor.release.value = 0.14;
 
       const gain = ctx.createGain();
-      gain.gain.value = modeRef.current === 'badmash' ? 1.06 : 1.0;
+      gain.gain.value = modeRef.current === 'badmash' ? 1.08 : 1.0;
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
@@ -1117,6 +1155,7 @@ export function useCosmicLive() {
     isSessionReadyRef.current = false;
     retryCountRef.current = 0;
     resumeHandleRef.current = null;
+    activeSessionIdRef.current = null;
     clearReconnectTimers();
     clearAudioQueue('user-disconnect');
     stopMicrophone();
@@ -1272,6 +1311,10 @@ export function useCosmicLive() {
               badmashMode: modeRef.current === 'badmash',
               resumeHandle: resumeHandleRef.current,
               features: featuresRef.current,
+              conversationMemory: buildMemoryContextEntries(
+                recentSessionsRef.current,
+                transcriptsRef.current,
+              ),
             }),
           );
 
@@ -1365,6 +1408,13 @@ export function useCosmicLive() {
   const connect = useCallback(async () => {
     if (stateRef.current === 'CONNECTING') return;
     clearReconnectTimers();
+    if (!activeSessionIdRef.current) {
+      const now = Date.now();
+      activeSessionIdRef.current = `sess_${now}_${Math.random().toString(36).slice(2, 7)}`;
+      activeSessionStartedAtRef.current = now;
+      setTranscripts([]);
+      transcriptsRef.current = [];
+    }
     userWantsLiveRef.current = true;
     await executeConnectAttempt(false);
   }, [clearReconnectTimers, executeConnectAttempt]);
@@ -1442,6 +1492,10 @@ export function useCosmicLive() {
             type: 'set_mode',
             badmashMode: next === 'badmash',
             features: featuresRef.current,
+            conversationMemory: buildMemoryContextEntries(
+              recentSessionsRef.current,
+              transcriptsRef.current,
+            ),
           }),
         );
       }
@@ -1484,6 +1538,10 @@ export function useCosmicLive() {
             JSON.stringify({
               type: 'update_features',
               features: next,
+              conversationMemory: buildMemoryContextEntries(
+                recentSessionsRef.current,
+                transcriptsRef.current,
+              ),
             }),
           );
         }
@@ -1790,6 +1848,7 @@ export function useCosmicLive() {
     micNotice,
     backendUrl,
     transcripts,
+    recentSessions,
     actionLogs,
     diagnosticLogs,
     diagnostics,
@@ -1812,6 +1871,7 @@ export function useCosmicLive() {
     testSpeaker,
     runManualSafeAction,
     updateBackendUrl,
+    clearRecentSessions,
     clearError: () => setErrorMessage(null),
     clearMicNotice: () => setMicNotice(null),
   };

@@ -32,9 +32,15 @@ import {
 } from './src/services/liveKnowledgeService.ts';
 import {
   DEFAULT_COSMIC_FEATURES,
+  type ConversationMemoryItem,
   type CosmicFeaturesConfig,
   type CosmicMode,
 } from './src/types/cosmic.ts';
+import {
+  MAX_MEMORY_ITEMS,
+  MAX_MEMORY_TEXT_CHARS,
+  sanitizeConversationMemoryPayload,
+} from './src/utils/conversationHistory.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +72,7 @@ interface ClientControlMessage {
   badmashMode?: boolean;
   resumeHandle?: string | null;
   features?: Partial<CosmicFeaturesConfig>;
+  conversationMemory?: ConversationMemoryItem[];
   data?: string;
   mimeType?: string;
   text?: string;
@@ -550,12 +557,28 @@ async function startServer() {
     let isDeveloperVerified = false;
     let latestResumeHandle: string | null = null;
     const recentAssistantOpeners: string[] = [];
+    let activeConversationMemory: ConversationMemoryItem[] = [];
     let currentInputTranscriptBuffer = '';
     let currentOutputTranscriptBuffer = '';
     let isEstablishing = false;
     let clientClosed = false;
     let connectNonce = 0;
     let isAlive = true;
+
+    const recordMemoryTurn = (
+      speaker: 'user' | 'cosmic',
+      rawText: string,
+      mode: CosmicMode,
+    ) => {
+      const cleaned = rawText.replace(/\s+/g, ' ').trim().slice(0, MAX_MEMORY_TEXT_CHARS);
+      if (!cleaned) return;
+      const last = activeConversationMemory[activeConversationMemory.length - 1];
+      if (last && last.speaker === speaker && last.text === cleaned) return;
+      activeConversationMemory = [
+        ...activeConversationMemory,
+        { speaker, text: cleaned, mode, timestamp: Date.now() },
+      ].slice(-MAX_MEMORY_ITEMS);
+    };
 
     const heartbeatTimer = setInterval(() => {
       if (clientWs.readyState !== WebSocket.OPEN) return;
@@ -657,6 +680,7 @@ async function startServer() {
           {
             developerVerified: isDeveloperVerified,
             recentResponses: recentAssistantOpeners,
+            conversationMemory: activeConversationMemory,
             features: activeFeatures,
           },
           handleToUse,
@@ -719,8 +743,12 @@ async function startServer() {
             }
 
             if (serverContent?.turnComplete) {
+              if (currentInputTranscriptBuffer.trim()) {
+                recordMemoryTurn('user', currentInputTranscriptBuffer, activeMode);
+              }
               if (currentOutputTranscriptBuffer.trim()) {
                 recordAssistantOpener(currentOutputTranscriptBuffer);
+                recordMemoryTurn('cosmic', currentOutputTranscriptBuffer, activeMode);
               }
               currentInputTranscriptBuffer = '';
               currentOutputTranscriptBuffer = '';
@@ -941,6 +969,13 @@ async function startServer() {
         activeFeatures = resolveCosmicFeatures(msg.features);
       }
 
+      if (Array.isArray(msg.conversationMemory)) {
+        const sanitized = sanitizeConversationMemoryPayload(msg.conversationMemory);
+        if (sanitized.length > 0) {
+          activeConversationMemory = sanitized;
+        }
+      }
+
       if (msg.type === 'connect') {
         const mode: CosmicMode = msg.badmashMode ? 'badmash' : 'normal';
         const handleOverride =
@@ -1004,6 +1039,7 @@ async function startServer() {
 
       if (msg.type === 'text' && typeof msg.text === 'string' && msg.text.trim().length > 0) {
         const cleanedText = msg.text.trim();
+        recordMemoryTurn('user', cleanedText, activeMode);
         try {
           if (!isDeveloperVerified && verifyDeveloperCode(cleanedText)) {
             promoteDeveloperRespectMode(activeSession);

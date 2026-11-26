@@ -101,6 +101,21 @@ export const ALLOWLISTED_APPS: AllowlistedAppSpec[] = [
     androidPackage: 'com.google.android.calendar',
     webUrl: 'https://calendar.google.com',
   },
+  {
+    id: 'gallery',
+    displayName: 'Gallery',
+    aliases: ['gallery', 'photos', 'google photos'],
+    androidPackage: 'com.google.android.apps.photos',
+    webUrl: 'https://photos.google.com',
+  },
+  {
+    id: 'clock',
+    displayName: 'Clock',
+    aliases: ['clock', 'alarm', 'timer'],
+    androidPackage: 'com.google.android.deskclock',
+    webUrl: null,
+    requiresNativeBridge: true,
+  },
 ];
 
 export type AppResolutionResult =

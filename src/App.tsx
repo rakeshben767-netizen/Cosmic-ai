@@ -36,6 +36,7 @@ export default function App() {
     micNotice,
     backendUrl,
     transcripts,
+    recentSessions,
     actionLogs,
     diagnosticLogs,
     diagnostics,
@@ -58,6 +59,7 @@ export default function App() {
     testSpeaker,
     runManualSafeAction,
     updateBackendUrl,
+    clearRecentSessions,
     clearError,
     clearMicNotice,
   } = useCosmicLive();
@@ -477,11 +479,13 @@ export default function App() {
         bridgeRuntime={bridgeRuntime}
         backendUrl={backendUrl}
         transcripts={transcripts}
+        recentSessions={recentSessions}
         actionLogs={actionLogs}
         diagnosticLogs={diagnosticLogs}
         onTestSpeaker={testSpeaker}
         onRunSafeAction={runManualSafeAction}
         onUpdateBackendUrl={updateBackendUrl}
+        onClearRecentSessions={clearRecentSessions}
       />
 
       {/* Privacy Policy Modal */}
@@ -510,6 +514,7 @@ export default function App() {
           bridgeRuntime={bridgeRuntime}
           backendUrl={backendUrl}
           transcripts={transcripts}
+          recentSessions={recentSessions}
           actionLogs={actionLogs}
           diagnosticLogs={diagnosticLogs}
           onUpdateFeatures={updateFeatures}
@@ -517,6 +522,7 @@ export default function App() {
           onTestSpeaker={testSpeaker}
           onRunSafeAction={runManualSafeAction}
           onUpdateBackendUrl={updateBackendUrl}
+          onClearRecentSessions={clearRecentSessions}
         />
       )}
     </div>

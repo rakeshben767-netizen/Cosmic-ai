@@ -1,21 +1,31 @@
 import { useState } from 'react';
 import {
   Activity,
+  ChevronDown,
+  ChevronUp,
+  Download,
   ExternalLink,
+  History,
   Phone,
   ShieldCheck,
   Smartphone,
   Terminal,
+  Trash2,
   Volume2,
   X,
 } from 'lucide-react';
 import type {
   ActionLogEntry,
   AudioDiagnosticsSnapshot,
+  ConversationSessionRecord,
   CosmicMode,
   DiagnosticLogEntry,
   TranscriptEntry,
 } from '../types/cosmic.ts';
+import {
+  downloadSessionTranscriptTxt,
+  formatSessionTimestamp,
+} from '../utils/conversationHistory.ts';
 
 interface DiagnosticsDrawerProps {
   open: boolean;
@@ -26,11 +36,13 @@ interface DiagnosticsDrawerProps {
   bridgeRuntime: { hasNativeBridge: boolean; runtimeLabel: string };
   backendUrl: string;
   transcripts: TranscriptEntry[];
+  recentSessions: ConversationSessionRecord[];
   actionLogs: ActionLogEntry[];
   diagnosticLogs: DiagnosticLogEntry[];
   onTestSpeaker: () => void;
   onRunSafeAction: (name: string, args: Record<string, unknown>) => void;
   onUpdateBackendUrl: (url: string) => boolean;
+  onClearRecentSessions?: () => void;
 }
 
 export function DiagnosticsDrawer({
@@ -42,11 +54,13 @@ export function DiagnosticsDrawer({
   bridgeRuntime,
   backendUrl,
   transcripts,
+  recentSessions,
   actionLogs,
   diagnosticLogs,
   onTestSpeaker,
   onRunSafeAction,
   onUpdateBackendUrl,
+  onClearRecentSessions,
 }: DiagnosticsDrawerProps) {
   const [activeTab, setActiveTab] = useState<'audio' | 'actions' | 'logs'>('audio');
   const [customUrl, setCustomUrl] = useState('https://www.wikipedia.org');
@@ -58,6 +72,8 @@ export function DiagnosticsDrawer({
   const [customContact, setCustomContact] = useState('Mom');
   const [serverDraft, setServerDraft] = useState(backendUrl);
   const [serverSavedMsg, setServerSavedMsg] = useState<string | null>(null);
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
+  const [exportedSessionId, setExportedSessionId] = useState<string | null>(null);
 
   if (!open) return null;
 
@@ -444,8 +460,158 @@ export function DiagnosticsDrawer({
 
         {activeTab === 'logs' && (
           <div className="space-y-4">
+            {/* Recent Conversations (Last 5 Persisted Sessions + TXT Export) */}
+            <div
+              className="space-y-2.5 rounded-lg border border-white/10 bg-[#131726] p-3"
+              data-testid="recent-conversations-section"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="flex items-center gap-1.5 font-semibold text-slate-100">
+                  <History className="h-3.5 w-3.5 text-sky-400" />
+                  <span>Recent Conversations</span>
+                </h3>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[10px] text-slate-400 tabular-nums">
+                    {recentSessions.length}/5 saved
+                  </span>
+                  {recentSessions.length > 0 && onClearRecentSessions && (
+                    <button
+                      type="button"
+                      onClick={onClearRecentSessions}
+                      aria-label="Clear saved conversations"
+                      title="Clear saved conversations"
+                      className="inline-flex items-center gap-1 rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400 transition-colors hover:border-red-400/40 hover:text-red-300"
+                    >
+                      <Trash2 className="h-2.5 w-2.5" />
+                      <span>Clear</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] leading-relaxed text-slate-400">
+                Persists your last 5 sessions locally so Cosmic AI remembers past chats across
+                reloads and mode switches.
+              </p>
+
+              {recentSessions.length === 0 ? (
+                <p className="rounded-md border border-white/5 bg-[#090b12] p-2.5 text-[11px] text-slate-500">
+                  No saved conversations yet. Power on Cosmic AI and chat to record your first
+                  session.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {recentSessions.map((session, idx) => {
+                    const isExpanded = expandedSessionId === session.id;
+                    const lastEntry = session.entries[session.entries.length - 1];
+                    const wasExported = exportedSessionId === session.id;
+                    return (
+                      <li
+                        key={session.id}
+                        data-testid={`recent-session-${idx}`}
+                        className="rounded-lg border border-white/10 bg-[#0b0e18] p-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 font-mono text-[10px] text-slate-300">
+                              <span className="truncate font-semibold text-slate-100">
+                                {formatSessionTimestamp(session.startedAt)}
+                              </span>
+                              <span className="text-slate-600">·</span>
+                              <span
+                                className={
+                                  session.mode === 'badmash'
+                                    ? 'text-purple-300'
+                                    : 'text-sky-300'
+                                }
+                              >
+                                {session.mode === 'badmash' ? 'Badmash' : 'Normal'}
+                              </span>
+                              <span className="text-slate-600">·</span>
+                              <span className="text-slate-400 tabular-nums">
+                                {session.entries.length} msg{session.entries.length === 1 ? '' : 's'}
+                              </span>
+                            </div>
+                            {lastEntry && (
+                              <p className="mt-1 truncate text-[11px] text-slate-400">
+                                <span className="text-slate-500">
+                                  {lastEntry.speaker === 'user' ? 'You:' : 'Cosmic:'}
+                                </span>{' '}
+                                {lastEntry.text}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const ok = downloadSessionTranscriptTxt(session);
+                                if (ok) {
+                                  setExportedSessionId(session.id);
+                                  window.setTimeout(() => {
+                                    setExportedSessionId((curr) =>
+                                      curr === session.id ? null : curr,
+                                    );
+                                  }, 2000);
+                                }
+                              }}
+                              data-testid={`export-transcript-${idx}`}
+                              aria-label={`Export session ${idx + 1} transcript as text file`}
+                              className="inline-flex items-center gap-1 rounded-md border border-sky-400/35 bg-sky-500/15 px-2 py-1 text-[10px] font-semibold text-sky-200 transition-colors hover:bg-sky-500/25"
+                            >
+                              <Download className="h-3 w-3" />
+                              <span>{wasExported ? 'Saved' : 'Export .txt'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedSessionId((prev) =>
+                                  prev === session.id ? null : session.id,
+                                )
+                              }
+                              aria-label={isExpanded ? 'Hide transcript' : 'Show transcript'}
+                              className="flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              ) : (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <ul className="mt-2.5 space-y-1.5 border-t border-white/10 pt-2">
+                            {session.entries.map((entry) => (
+                              <li
+                                key={entry.id}
+                                className="rounded border border-white/5 bg-[#121625] px-2 py-1.5 text-[11px]"
+                              >
+                                <div className="mb-0.5 flex items-center justify-between text-[9px] font-semibold tracking-wider text-slate-400 uppercase">
+                                  <span
+                                    className={
+                                      entry.speaker === 'user' ? 'text-sky-300' : 'text-purple-300'
+                                    }
+                                  >
+                                    {entry.speaker === 'user' ? 'You' : 'Cosmic AI'}
+                                  </span>
+                                  <span>{entry.mode === 'badmash' ? 'Badmash' : 'Normal'}</span>
+                                </div>
+                                <p className="text-slate-100">{entry.text}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
             <div className="space-y-2">
-              <h3 className="font-semibold text-slate-200">Recent Conversation Transcript</h3>
+              <h3 className="font-semibold text-slate-200">Active Session Transcript</h3>
               {transcripts.length === 0 ? (
                 <p className="text-slate-500">
                   Start Cosmic AI and speak in Hindi, English, Hinglish, Marathi, or any supported
