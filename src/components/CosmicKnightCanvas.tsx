@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { CosmicMode, CosmicState } from '../types/cosmic.ts';
 import {
   animateCosmicOrbRig,
@@ -93,16 +92,14 @@ export function CosmicKnightCanvas({
       return;
     }
 
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(
-      container.clientWidth || window.innerWidth,
-      container.clientHeight || window.innerHeight,
-    );
+    const initialW = container.clientWidth || window.innerWidth;
+    const maxDpr = initialW < 768 ? 1.25 : 1.5;
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, maxDpr));
+    renderer.setSize(initialW, container.clientHeight || window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
+    renderer.toneMappingExposure = 1.08;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = !isSoftwareGl;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = false;
 
     const canvas = renderer.domElement;
     canvas.style.display = 'block';
@@ -121,13 +118,6 @@ export function CosmicKnightCanvas({
     scene.background = currentBg;
     scene.fog = new THREE.FogExp2(currentBg.getHex(), 0.055);
 
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    const roomEnv = new RoomEnvironment();
-    const envTarget = pmremGenerator.fromScene(roomEnv, 0.04);
-    scene.environment = envTarget.texture;
-    roomEnv.dispose();
-    pmremGenerator.dispose();
-
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
     const camera = new THREE.PerspectiveCamera(42, width / Math.max(height, 1), 0.1, 60);
@@ -145,51 +135,38 @@ export function CosmicKnightCanvas({
     };
     updateCameraTransform(width / Math.max(height, 1));
 
-    // Studio Lighting
-    const hemiLight = new THREE.HemisphereLight('#c7d2fe', '#0f172a', 0.95);
+    // Lightweight Studio Lighting (no heavy shadow map pass)
+    const hemiLight = new THREE.HemisphereLight('#c7d2fe', '#0f172a', 1.1);
     scene.add(hemiLight);
 
     const keyLight = new THREE.DirectionalLight(
       modeRef.current === 'badmash' ? BADMASH_KEY_COLOR : NORMAL_KEY_COLOR,
-      2.1,
+      1.9,
     );
     keyLight.position.set(2.8, 5.2, 4.4);
-    if (!isSoftwareGl) {
-      keyLight.castShadow = true;
-      keyLight.shadow.mapSize.set(1024, 1024);
-      keyLight.shadow.camera.near = 1;
-      keyLight.shadow.camera.far = 16;
-      keyLight.shadow.bias = -0.0005;
-      keyLight.shadow.normalBias = 0.02;
-    }
     scene.add(keyLight);
 
     const rimLight = new THREE.DirectionalLight(
       modeRef.current === 'badmash' ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR,
-      1.75,
+      1.55,
     );
     rimLight.position.set(-3.4, 3.6, -2.8);
     scene.add(rimLight);
 
-    const fillLight = new THREE.PointLight('#ffffff', 0.9, 14);
-    fillLight.position.set(0, 2.4, 3.2);
-    scene.add(fillLight);
-
-    // Subtle reflective ground circle fading into fog
-    const groundGeo = new THREE.CircleGeometry(18, 64);
+    // Subtle ground circle fading into fog
+    const groundGeo = new THREE.CircleGeometry(18, 32);
     const groundMat = new THREE.MeshStandardMaterial({
       color: '#1b2232',
-      roughness: 0.85,
-      metalness: 0.25,
+      roughness: 0.88,
+      metalness: 0.2,
     });
     const groundMesh = new THREE.Mesh(groundGeo, groundMat);
     groundMesh.rotation.x = -Math.PI / 2;
     groundMesh.position.y = -0.26;
-    groundMesh.receiveShadow = true;
     scene.add(groundMesh);
 
-    // Ambient floating space dust particles
-    const particleCount = 130;
+    // Lightweight ambient space dust particles
+    const particleCount = 32;
     const positions = new Float32Array(particleCount * 3);
     for (let i = 0; i < particleCount; i++) {
       const ang = (i * 2.39996) % (Math.PI * 2);
@@ -356,7 +333,6 @@ export function CosmicKnightCanvas({
       groundMat.dispose();
       particleGeo.dispose();
       particleMat.dispose();
-      envTarget.dispose();
       renderer.dispose();
       if (canvas.parentNode === container) {
         container.removeChild(canvas);

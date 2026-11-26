@@ -11,13 +11,11 @@ import {
   RotateCcw,
   Send,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   X,
 } from 'lucide-react';
 import { AdminAccessModal } from './components/AdminAccessModal.tsx';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
-import { DiagnosticsDrawer } from './components/DiagnosticsDrawer.tsx';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
 import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
@@ -65,7 +63,6 @@ export default function App() {
   } = useCosmicLive();
 
   const [resetViewSignal, setResetViewSignal] = useState(0);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
   const [adminDrawerRequested, setAdminDrawerRequested] = useState(false);
   const [textDraft, setTextDraft] = useState('');
@@ -180,24 +177,6 @@ export default function App() {
         </div>
 
         <div className="pointer-events-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setDiagnosticsOpen((prev) => !prev)}
-            aria-label="Diagnostics and Actions"
-            className={`flex h-9 items-center gap-2 rounded-lg border px-2.5 text-xs font-medium transition-colors sm:px-3 ${
-              diagnosticsOpen
-                ? isBadmash
-                  ? 'border-purple-400/70 bg-purple-500/20 text-purple-100'
-                  : 'border-sky-400/70 bg-sky-500/20 text-sky-100'
-                : isBadmash
-                  ? 'border-purple-500/40 bg-[#120d1d]/90 text-purple-300 hover:border-purple-400/70 hover:text-white'
-                  : 'border-sky-400/35 bg-[#0d101b]/90 text-sky-300 hover:border-sky-400/65 hover:text-white'
-            }`}
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-            <span className="hidden text-slate-200 sm:inline">Diagnostics &amp; Actions</span>
-          </button>
-
           <button
             type="button"
             onClick={() => setPrivacyModalOpen(true)}
@@ -468,25 +447,6 @@ export default function App() {
           </button>
         </div>
       </footer>
-
-      {/* Diagnostics & Safe Actions Drawer */}
-      <DiagnosticsDrawer
-        open={diagnosticsOpen}
-        onClose={() => setDiagnosticsOpen(false)}
-        mode={mode}
-        diagnostics={diagnostics}
-        speakerTestResult={speakerTestResult}
-        bridgeRuntime={bridgeRuntime}
-        backendUrl={backendUrl}
-        transcripts={transcripts}
-        recentSessions={recentSessions}
-        actionLogs={actionLogs}
-        diagnosticLogs={diagnosticLogs}
-        onTestSpeaker={testSpeaker}
-        onRunSafeAction={runManualSafeAction}
-        onUpdateBackendUrl={updateBackendUrl}
-        onClearRecentSessions={clearRecentSessions}
-      />
 
       {/* Privacy Policy Modal */}
       <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />

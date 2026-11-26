@@ -69,15 +69,18 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     });
     assert.match(badmashPrompt, /BRUTAL MUMBAI TAPORI DON/i);
     assert.match(badmashPrompt, /STRICTLY FORBIDDEN CUSTOMER-SUPPORT OPENERS/i);
+    assert.match(badmashPrompt, /CLEAR VOICE & CRISP PRONUNCIATION/i);
     assert.match(badmashPrompt, /Sure, I can help you/i);
     assert.match(badmashPrompt, /PERSISTENT CONVERSATION MEMORY/i);
     assert.match(badmashPrompt, /My favorite team is Mumbai Indians/);
     assert.doesNotMatch(badmashPrompt, /1147/);
   });
 
-  it('keeps normal mode simple, sweet, and free of extreme badmash roast engine rules and declares all fast voice tools', () => {
+  it('keeps normal mode simple, sweet, sanskari/Sanskrit-capable, and free of badmash slang and roast rules', () => {
     const normalPrompt = buildCosmicSystemInstruction('normal');
-    assert.match(normalPrompt, /Simple, sweet, calm, friendly, intelligent/i);
+    assert.match(normalPrompt, /SIMPLE, SWEET & SANSKARI/i);
+    assert.match(normalPrompt, /Sanskrit/i);
+    assert.match(normalPrompt, /Custom Slang Mode is currently turned OFF/i);
     assert.doesNotMatch(normalPrompt, /ROAST BATTLE ENGINE \(ENABLED\)/i);
     assert.doesNotMatch(normalPrompt, /BRUTAL MUMBAI TAPORI DON/i);
     assert.match(normalPrompt, /openYouTubeSearch/);

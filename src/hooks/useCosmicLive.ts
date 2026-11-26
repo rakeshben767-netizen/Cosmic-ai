@@ -112,7 +112,7 @@ function buildVoiceTextureCurve(roughnessMix: number): Float32Array<ArrayBuffer>
 }
 
 const NORMAL_CURVE = buildVoiceTextureCurve(0);
-const BADMASH_HUSKY_CURVE = buildVoiceTextureCurve(0.08);
+const BADMASH_HUSKY_CURVE = buildVoiceTextureCurve(0);
 
 const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
@@ -283,13 +283,13 @@ export function useCosmicLive() {
     }
     if (ctx && ctx.state !== 'closed') {
       if (bassFilter) {
-        bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 6.0 : 0, ctx.currentTime, 0.06);
+        bassFilter.gain.setTargetAtTime(mode === 'badmash' ? 1.8 : 0, ctx.currentTime, 0.06);
       }
       if (presenceFilter) {
-        presenceFilter.gain.setTargetAtTime(mode === 'badmash' ? 3.2 : 0, ctx.currentTime, 0.06);
+        presenceFilter.gain.setTargetAtTime(mode === 'badmash' ? 2.4 : 0, ctx.currentTime, 0.06);
       }
       if (gainNode) {
-        gainNode.gain.setTargetAtTime(mode === 'badmash' ? 1.08 : 1.0, ctx.currentTime, 0.06);
+        gainNode.gain.setTargetAtTime(mode === 'badmash' ? 1.02 : 1.0, ctx.currentTime, 0.06);
       }
     }
   }, [mode]);
@@ -409,14 +409,14 @@ export function useCosmicLive() {
       ctx = new AudioCtx({ latencyHint: 'interactive' });
       const bassFilter = ctx.createBiquadFilter();
       bassFilter.type = 'lowshelf';
-      bassFilter.frequency.value = 135;
-      bassFilter.gain.value = modeRef.current === 'badmash' ? 6.0 : 0;
+      bassFilter.frequency.value = 140;
+      bassFilter.gain.value = modeRef.current === 'badmash' ? 1.8 : 0;
 
       const presenceFilter = ctx.createBiquadFilter();
       presenceFilter.type = 'peaking';
-      presenceFilter.frequency.value = 2450;
-      presenceFilter.Q.value = 1.15;
-      presenceFilter.gain.value = modeRef.current === 'badmash' ? 3.2 : 0;
+      presenceFilter.frequency.value = 2800;
+      presenceFilter.Q.value = 1.0;
+      presenceFilter.gain.value = modeRef.current === 'badmash' ? 2.4 : 0;
 
       const roughnessShaper = ctx.createWaveShaper();
       roughnessShaper.oversample = '2x';
@@ -430,7 +430,7 @@ export function useCosmicLive() {
       compressor.release.value = 0.14;
 
       const gain = ctx.createGain();
-      gain.gain.value = modeRef.current === 'badmash' ? 1.08 : 1.0;
+      gain.gain.value = modeRef.current === 'badmash' ? 1.02 : 1.0;
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
