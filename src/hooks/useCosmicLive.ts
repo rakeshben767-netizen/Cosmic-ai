@@ -116,7 +116,7 @@ const BADMASH_HUSKY_CURVE = buildVoiceTextureCurve(0);
 
 const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
-  'https://ais-pre-ewacjsnpswr655db2sqdfo-986483805469.asia-southeast1.run.app';
+  'https://cosmic-ai-2.ai.studio';
 const BACKEND_STORAGE_KEY = 'cosmic_backend_url';
 const FEATURES_STORAGE_KEY = 'cosmic_features_config';
 
@@ -132,6 +132,7 @@ function getInitialBackendUrl(): string {
     if (
       saved &&
       /^https?:\/\//i.test(saved) &&
+      !/ais-(pre|dev)-.*\.run\.app/i.test(saved) &&
       !/cosmic-ai-2\.onrender\.com/i.test(saved)
     ) {
       return saved;
