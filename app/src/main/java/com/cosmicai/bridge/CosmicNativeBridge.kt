@@ -302,9 +302,9 @@ class CosmicNativeBridge(private val context: Context) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             if (intent.resolveActivity(context.packageManager) != null) {
-                return try {
+                try {
                     context.startActivity(intent)
-                    jsonResult(
+                    return jsonResult(
                         ok = true,
                         message = "Opened WhatsApp chat with prepared message ready to send.",
                         extra = mapOf("state" to "whatsapp_opened")
