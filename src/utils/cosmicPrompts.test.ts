@@ -69,6 +69,9 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     });
     assert.match(badmashPrompt, /BRUTAL MUMBAI TAPORI DON/i);
     assert.match(badmashPrompt, /STRICTLY FORBIDDEN CUSTOMER-SUPPORT OPENERS/i);
+    assert.match(badmashPrompt, /NO REPEATED NICKNAMES/i);
+    assert.match(badmashPrompt, /STRICT BAN ON REPEATING "KYA KAAM HAI"/i);
+    assert.match(badmashPrompt, /TAPORI WORD PRONUNCIATION & PHONETIC CLARITY/i);
     assert.match(badmashPrompt, /CLEAR VOICE & CRISP PRONUNCIATION/i);
     assert.match(badmashPrompt, /Sure, I can help you/i);
     assert.match(badmashPrompt, /PERSISTENT CONVERSATION MEMORY/i);
@@ -76,11 +79,12 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     assert.doesNotMatch(badmashPrompt, /1147/);
   });
 
-  it('keeps normal mode simple, sweet, sanskari/Sanskrit-capable, and free of badmash slang and roast rules', () => {
+  it('keeps normal mode a sweet simple Hindi girl AI completely free of Tapori slang and roast rules', () => {
     const normalPrompt = buildCosmicSystemInstruction('normal');
-    assert.match(normalPrompt, /SIMPLE, SWEET & SANSKARI/i);
-    assert.match(normalPrompt, /Sanskrit/i);
-    assert.match(normalPrompt, /Custom Slang Mode is currently turned OFF/i);
+    assert.match(normalPrompt, /SWEET, SIMPLE HINDI GIRL AI/i);
+    assert.match(normalPrompt, /female \(girl\) AI assistant/i);
+    assert.match(normalPrompt, /ZERO TAPORI WORDS/i);
+    assert.doesNotMatch(normalPrompt, /MUMBAI TAPORI & MARATHI SEMANTIC KNOWLEDGE BASE/i);
     assert.doesNotMatch(normalPrompt, /ROAST BATTLE ENGINE \(ENABLED\)/i);
     assert.doesNotMatch(normalPrompt, /BRUTAL MUMBAI TAPORI DON/i);
     assert.match(normalPrompt, /openYouTubeSearch/);

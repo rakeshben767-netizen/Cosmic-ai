@@ -58,7 +58,7 @@ export const MUMBAI_SLANG_VOCABULARY: TaporiTermEntry[] = [
     context: 'Emphatic Mumbai locative ("idhar" + Marathi suffix "-ich").',
     tone: 'friendly',
     appropriateUsage: 'Reassuring presence or pointing to exact location.',
-    example: 'Apun idharich hai bhidu, bol kya kaam hai.',
+    example: 'Apun idharich hai bhidu, chal scene set karte hain.',
   },
   {
     term: 'Udharich',
