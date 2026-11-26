@@ -65,6 +65,7 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     assert.doesNotMatch(normalPrompt, /ROAST BATTLE ENGINE \(ENABLED\)/i);
     assert.match(normalPrompt, /openYouTubeSearch/);
     assert.match(COSMIC_BADMASH_ENTRANCE_CUE, /Purple Knight/i);
+    assert.doesNotMatch(COSMIC_BADMASH_ENTRANCE_CUE, /\bboss\b/i);
     const expectedTools = [
       'searchLiveKnowledge',
       'openApp',

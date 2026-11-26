@@ -135,3 +135,26 @@ export function computeRmsLevel(samples: Float32Array): number {
   const rms = Math.sqrt(sumSq / samples.length);
   return Math.min(1, rms * 3.2);
 }
+
+export const MIN_SPEECH_RATE = 0.75;
+export const MAX_SPEECH_RATE = 1.5;
+export const DEFAULT_SPEECH_RATE = 1.0;
+
+export function clampSpeechRate(rate: unknown): number {
+  if (typeof rate !== 'number' || !Number.isFinite(rate)) {
+    return DEFAULT_SPEECH_RATE;
+  }
+  const clamped = Math.min(MAX_SPEECH_RATE, Math.max(MIN_SPEECH_RATE, rate));
+  return Math.round(clamped * 100) / 100;
+}
+
+export function computePlaybackDuration(
+  bufferDurationSeconds: number,
+  speechRate: number,
+): number {
+  if (!Number.isFinite(bufferDurationSeconds) || bufferDurationSeconds <= 0) {
+    return 0;
+  }
+  const safeRate = clampSpeechRate(speechRate);
+  return bufferDurationSeconds / safeRate;
+}

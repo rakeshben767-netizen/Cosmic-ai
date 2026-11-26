@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
+import android.provider.Settings
 import android.webkit.JavascriptInterface
 import androidx.core.content.ContextCompat
 import com.cosmicai.app.MainActivity
@@ -14,19 +15,8 @@ import org.json.JSONObject
 
 /**
  * COSMIC AI — Safe Android Native Bridge
- * Exposes strictly allowlisted actions to the WebView / Capacitor layer:
- *   1. openWhatsApp()
- *   2. openApp(appName)
- *   3. openYouTubeSearch(query)
- *   4. openUrl(url)
- *   5. makeCall(phoneNumber)
- *   6. callContact(contactName)
- *   7. findContact(contactName)
- *   8. openWhatsAppChat(phoneNumber, message)
  */
-class CosmicNativeBridge(
-    private val context: Context
-) {
+class CosmicNativeBridge(private val context: Context) {
 
     private val allowlistedPackages = mapOf(
         "whatsapp" to "com.whatsapp",
@@ -68,16 +58,14 @@ class CosmicNativeBridge(
     }
 
     @JavascriptInterface
-    fun openWhatsApp(): String {
-        return openApp("whatsapp")
-    }
+    fun openWhatsApp(): String = openApp("whatsapp")
 
     @JavascriptInterface
     fun openApp(appName: String?): String {
         val key = appName?.trim()?.lowercase() ?: ""
         if (key == "settings") {
             return try {
-                val intent = Intent(android.provider.Settings.ACTION_SETTINGS).apply {
+                val intent = Intent(Settings.ACTION_SETTINGS).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(intent)
@@ -123,7 +111,6 @@ class CosmicNativeBridge(
         val searchUrl = "https://www.youtube.com/results?search_query=${Uri.encode(query)}"
         val searchUri = Uri.parse(searchUrl)
 
-        // Prefer the installed YouTube app first
         val ytAppIntent = Intent(Intent.ACTION_VIEW, searchUri).apply {
             setPackage("com.google.android.youtube")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -141,7 +128,6 @@ class CosmicNativeBridge(
             }
         }
 
-        // Fall back to default browser if YouTube app is unavailable
         val browserIntent = Intent(Intent.ACTION_VIEW, searchUri).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -252,7 +238,6 @@ class CosmicNativeBridge(
             }
         }
 
-        // Prioritize exact display-name matches if present
         val exactMatches = matches.filter { it.first.equals(query, ignoreCase = true) }
         val ranked = if (exactMatches.isNotEmpty()) exactMatches else matches
         return null to ranked
@@ -304,29 +289,42 @@ class CosmicNativeBridge(
             "https://api.whatsapp.com/send?phone=$cleaned"
         }
 
-        val waPkg = "com.whatsapp"
-        val waInstalled = context.packageManager.getLaunchIntentForPackage(waPkg) != null
-        if (!waInstalled) {
-            return jsonResult(
-                ok = false,
-                message = "WhatsApp is not installed on this device.",
-                extra = mapOf("state" to "message_prepared")
-            )
-        }
-
-        return try {
+        val waPackages = listOf("com.whatsapp", "com.whatsapp.w4b")
+        for (pkg in waPackages) {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(waUrl)).apply {
-                setPackage(waPkg)
+                setPackage(pkg)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            context.startActivity(intent)
+            if (intent.resolveActivity(context.packageManager) != null) {
+                return try {
+                    context.startActivity(intent)
+                    jsonResult(
+                        ok = true,
+                        message = "Opened WhatsApp chat with prepared message ready to send.",
+                        extra = mapOf("state" to "whatsapp_opened")
+                    )
+                } catch (_: Exception) {
+                    // try next candidate
+                }
+            }
+        }
+
+        val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse(waUrl)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            context.startActivity(fallbackIntent)
             jsonResult(
                 ok = true,
-                message = "Opened WhatsApp chat with prepared message ready to send.",
+                message = "Opened WhatsApp chat link with prepared message ready to send.",
                 extra = mapOf("state" to "whatsapp_opened")
             )
         } catch (e: Exception) {
-            jsonResult(false, "Could not open WhatsApp chat: ${e.message}")
+            jsonResult(
+                ok = false,
+                message = "WhatsApp could not be opened on this device: ${e.message}",
+                extra = mapOf("state" to "message_prepared")
+            )
         }
     }
 

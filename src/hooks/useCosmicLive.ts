@@ -16,6 +16,8 @@ import {
 } from '../types/cosmic.ts';
 import {
   base64ToUint8,
+  clampSpeechRate,
+  computePlaybackDuration,
   computeRmsLevel,
   float32ToInt16Pcm,
   int16BytesToFloat32,
@@ -105,9 +107,9 @@ const BADMASH_HUSKY_CURVE = buildVoiceTextureCurve(0.05);
 
 const DEFAULT_ANDROID_BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ||
-  'https://cosmic-ai-2.ai.studio';
+  'https://ais-pre-ewacjsnpswr655db2sqdfo-986483805469.asia-southeast1.run.app';
 const BACKEND_STORAGE_KEY = 'cosmic_backend_url';
-const FEATURES_STORAGE_KEY = 'cosmic_features_v1';
+const FEATURES_STORAGE_KEY = 'cosmic_features_config';
 
 function isPackagedApkOrigin(): boolean {
   if (typeof window === 'undefined') return false;
@@ -121,7 +123,6 @@ function getInitialBackendUrl(): string {
     if (
       saved &&
       /^https?:\/\//i.test(saved) &&
-      !/ais-pre-.*\.run\.app/i.test(saved) &&
       !/cosmic-ai-2\.onrender\.com/i.test(saved)
     ) {
       return saved;
@@ -133,8 +134,23 @@ function getInitialBackendUrl(): string {
 }
 
 function getInitialFeatures(): CosmicFeaturesConfig {
-  // Always keep internal Featured/engine systems enabled in background for normal users
-  return { ...DEFAULT_COSMIC_FEATURES };
+  // Always keep internal Featured/engine systems enabled in background for normal users,
+  // while preserving the user's preferred speechRate across reloads.
+  let speechRate = DEFAULT_COSMIC_FEATURES.speechRate;
+  if (typeof window !== 'undefined') {
+    try {
+      const savedRaw = window.localStorage.getItem(FEATURES_STORAGE_KEY);
+      if (savedRaw) {
+        const parsed = JSON.parse(savedRaw) as Partial<CosmicFeaturesConfig>;
+        if (typeof parsed.speechRate === 'number' && Number.isFinite(parsed.speechRate)) {
+          speechRate = clampSpeechRate(parsed.speechRate);
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return { ...DEFAULT_COSMIC_FEATURES, speechRate };
 }
 
 export function resolveHttpBaseUrl(customBackendUrl: string): string {
@@ -464,13 +480,16 @@ export function useCosmicLive() {
           }
         }
 
+        const speechRate = clampSpeechRate(featuresRef.current.speechRate);
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
+        source.playbackRate.value = speechRate;
         source.connect(badmashBassFilterRef.current ?? gainNode);
 
         const now = ctx.currentTime;
         const startAt = Math.max(now + 0.015, nextStartTimeRef.current);
-        nextStartTimeRef.current = startAt + audioBuffer.duration;
+        nextStartTimeRef.current =
+          startAt + computePlaybackDuration(audioBuffer.duration, speechRate);
 
         activeSourcesRef.current.add(source);
         setCosmicState('SPEAKING');
@@ -1404,41 +1423,62 @@ export function useCosmicLive() {
     });
   }, [addLog, connect, retryMicrophone]);
 
+  const setModeDirect = useCallback(
+    (next: CosmicMode) => {
+      if (modeRef.current === next) return;
+      setMode(next);
+      resumeHandleRef.current = null;
+      addLog(
+        'info',
+        'gemini',
+        next === 'badmash'
+          ? 'BADMASH MODE ON -> Switching to Purple Knight + Don Voice (Charon).'
+          : 'NORMAL MODE ON -> Switching to Blue Knight + Voice (Zephyr).',
+      );
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        clearAudioQueue('mode-switch');
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'set_mode',
+            badmashMode: next === 'badmash',
+            features: featuresRef.current,
+          }),
+        );
+      }
+    },
+    [addLog, clearAudioQueue],
+  );
+
   const toggleBadmashMode = useCallback(() => {
     const next: CosmicMode = modeRef.current === 'normal' ? 'badmash' : 'normal';
-    setMode(next);
-    resumeHandleRef.current = null;
-    addLog(
-      'info',
-      'gemini',
-      next === 'badmash'
-        ? 'BADMASH MODE ON -> Switching to Purple Knight + Husky Charon voice.'
-        : 'NORMAL MODE ON -> Switching to Blue Knight + Friendly voice (Zephyr).',
-    );
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      clearAudioQueue('mode-switch');
-      wsRef.current.send(
-        JSON.stringify({
-          type: 'set_mode',
-          badmashMode: next === 'badmash',
-          features: featuresRef.current,
-        }),
-      );
-    }
-  }, [addLog, clearAudioQueue]);
+    setModeDirect(next);
+  }, [setModeDirect]);
 
   const updateFeatures = useCallback(
     (patch: Partial<CosmicFeaturesConfig>) => {
       setFeatures((prev) => {
-        const next: CosmicFeaturesConfig = { ...prev, ...patch };
+        const sanitizedPatch: Partial<CosmicFeaturesConfig> = { ...patch };
+        if (typeof sanitizedPatch.speechRate === 'number') {
+          sanitizedPatch.speechRate = clampSpeechRate(sanitizedPatch.speechRate);
+        }
+        const next: CosmicFeaturesConfig = { ...prev, ...sanitizedPatch };
         try {
           window.localStorage.setItem(FEATURES_STORAGE_KEY, JSON.stringify(next));
         } catch {
           // ignore storage errors
         }
+        const promptAffectingChange = Object.keys(sanitizedPatch).some(
+          (key) => key !== 'speechRate',
+        );
         featuresRef.current = next;
-        addLog('info', 'gemini', `Updated entertainment features: ${JSON.stringify(patch)}`);
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        addLog(
+          'info',
+          'gemini',
+          promptAffectingChange
+            ? `Updated entertainment features: ${JSON.stringify(sanitizedPatch)}`
+            : `Updated AI speech rate (Normal & Badmash): ${next.speechRate.toFixed(2)}x`,
+        );
+        if (promptAffectingChange && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           resumeHandleRef.current = null;
           wsRef.current.send(
             JSON.stringify({

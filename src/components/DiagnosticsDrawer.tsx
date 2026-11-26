@@ -52,6 +52,9 @@ export function DiagnosticsDrawer({
   const [customUrl, setCustomUrl] = useState('https://www.wikipedia.org');
   const [customPhone, setCustomPhone] = useState('+919876543210');
   const [customApp, setCustomApp] = useState('YouTube');
+  const [customYtQuery, setCustomYtQuery] = useState('phonk');
+  const [waContact, setWaContact] = useState('Papa');
+  const [waMessage, setWaMessage] = useState('Hi');
   const [customContact, setCustomContact] = useState('Mom');
   const [serverDraft, setServerDraft] = useState(backendUrl);
   const [serverSavedMsg, setServerSavedMsg] = useState<string | null>(null);
@@ -293,6 +296,57 @@ export function DiagnosticsDrawer({
                   className="rounded-md border border-white/15 bg-white/10 px-3 py-1.5 font-medium text-white hover:bg-white/15"
                 >
                   openApp
+                </button>
+              </div>
+
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  aria-label="YouTube search query"
+                  value={customYtQuery}
+                  onChange={(e) => setCustomYtQuery(e.target.value)}
+                  className="min-w-0 flex-1 rounded-md border border-white/15 bg-[#0a0d16] px-2.5 py-1.5 text-xs text-slate-100"
+                  placeholder="Search YouTube..."
+                />
+                <button
+                  type="button"
+                  onClick={() => onRunSafeAction('openYouTubeSearch', { query: customYtQuery })}
+                  className="rounded-md border border-sky-400/35 bg-sky-500/15 px-3 py-1.5 font-medium text-sky-100 hover:bg-sky-500/25"
+                >
+                  YouTube Search
+                </button>
+              </div>
+
+              <div className="space-y-1.5 rounded-md border border-white/10 bg-[#0b0e18] p-2">
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    aria-label="WhatsApp contact or phone"
+                    value={waContact}
+                    onChange={(e) => setWaContact(e.target.value)}
+                    className="w-24 rounded-md border border-white/15 bg-[#0a0d16] px-2 py-1 text-xs text-slate-100"
+                    placeholder="Papa / +91..."
+                  />
+                  <input
+                    type="text"
+                    aria-label="WhatsApp message text"
+                    value={waMessage}
+                    onChange={(e) => setWaMessage(e.target.value)}
+                    className="min-w-0 flex-1 rounded-md border border-white/15 bg-[#0a0d16] px-2 py-1 text-xs text-slate-100"
+                    placeholder="Message text..."
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onRunSafeAction('draftWhatsAppMessage', {
+                      contactName: waContact,
+                      message: waMessage,
+                    })
+                  }
+                  className="w-full rounded-md border border-emerald-400/35 bg-emerald-500/15 px-2.5 py-1.5 font-medium text-emerald-100 hover:bg-emerald-500/25"
+                >
+                  Prepare WhatsApp Message
                 </button>
               </div>
 

@@ -115,7 +115,6 @@ export function resolveAppTarget(rawAppName: string): AppResolutionResult {
   if (!normalized) {
     return { allowed: false, reason: 'Application name is empty.' };
   }
-  // Reject arbitrary raw Android package names such as com.foo.bar
   if (/^[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_.]+$/i.test(normalized)) {
     return {
       allowed: false,
@@ -189,7 +188,6 @@ export function validateSafeUrl(rawUrl: string): UrlValidationResult {
     if (!parsed.hostname || !parsed.hostname.includes('.')) {
       return { valid: false, reason: 'URL must include a valid public domain.' };
     }
-    // Prefer HTTPS
     if (parsed.protocol === 'http:') {
       parsed.protocol = 'https:';
     }
@@ -503,6 +501,37 @@ export async function executeSafeToolCall(
       return makeResult('draftWhatsAppMessage', false, 'Message text is required.', 'validation');
     }
 
+    const directPhone = validatePhoneNumber(contactName);
+    if (directPhone.valid) {
+      const draft: PendingWhatsAppDraft = {
+        id: `wa_${timestamp}`,
+        contactName: directPhone.normalized,
+        phoneNumber: directPhone.normalized,
+        message,
+        state: 'message_prepared',
+        createdAt: timestamp,
+      };
+      return makeResult(
+        'draftWhatsAppMessage',
+        true,
+        `Prepared WhatsApp message for "${directPhone.normalized}". Ask the user to confirm before opening WhatsApp to send.`,
+        bridge ? 'android-bridge' : 'browser',
+        {
+          draftId: draft.id,
+          contactName: directPhone.normalized,
+          message,
+          state: 'message_prepared',
+          messagePrepared: true,
+          whatsappOpened: false,
+          messageSent: false,
+          messageDelivered: false,
+          requiresUserConfirmation: true,
+        },
+        undefined,
+        { pendingDraft: draft },
+      );
+    }
+
     if (!bridge) {
       return makeResult(
         'draftWhatsAppMessage',
@@ -567,6 +596,83 @@ export async function executeSafeToolCall(
     }
     if (!message) {
       return makeResult('sendWhatsAppMessage', false, 'Message text is required.', 'validation');
+    }
+
+    const directPhone = validatePhoneNumber(contactName);
+    if (directPhone.valid) {
+      if (!confirmed) {
+        const draft: PendingWhatsAppDraft = {
+          id: `wa_${timestamp}`,
+          contactName: directPhone.normalized,
+          phoneNumber: directPhone.normalized,
+          message,
+          state: 'message_prepared',
+          createdAt: timestamp,
+        };
+        return makeResult(
+          'sendWhatsAppMessage',
+          false,
+          `Confirmation required before opening WhatsApp for "${directPhone.normalized}". State: message_prepared.`,
+          'validation',
+          {
+            draftId: draft.id,
+            contactName: directPhone.normalized,
+            message,
+            state: 'message_prepared',
+            messagePrepared: true,
+            whatsappOpened: false,
+            messageSent: false,
+            messageDelivered: false,
+            requiresUserConfirmation: true,
+          },
+          undefined,
+          { pendingDraft: draft },
+        );
+      }
+
+      if (bridge) {
+        const chatRes = await bridge.openWhatsAppChat(directPhone.normalized, message);
+        return makeResult(
+          'sendWhatsAppMessage',
+          chatRes.ok,
+          chatRes.ok
+            ? `Opened WhatsApp chat for "${directPhone.normalized}" with the prepared message ready to send.`
+            : chatRes.message,
+          'android-bridge',
+          {
+            contactName: directPhone.normalized,
+            state: chatRes.ok ? 'whatsapp_opened' : 'message_prepared',
+            messagePrepared: true,
+            whatsappOpened: chatRes.ok,
+            messageSent: false,
+            messageDelivered: false,
+          },
+          undefined,
+          chatRes.ok ? { clearDraft: true } : undefined,
+        );
+      }
+
+      const waDigits = directPhone.normalized.replace(/[^0-9]/g, '');
+      const waChatUrl = `https://wa.me/${waDigits}?text=${encodeURIComponent(message)}`;
+      const triggered = triggerBrowserLink(waChatUrl, true);
+      return makeResult(
+        'sendWhatsAppMessage',
+        triggered,
+        triggered
+          ? `Opened WhatsApp chat for "${directPhone.normalized}" with the prepared message ready to send.`
+          : 'Unable to open WhatsApp chat automatically in this browser.',
+        'browser',
+        {
+          contactName: directPhone.normalized,
+          state: triggered ? 'whatsapp_opened' : 'message_prepared',
+          messagePrepared: true,
+          whatsappOpened: triggered,
+          messageSent: false,
+          messageDelivered: false,
+        },
+        waChatUrl,
+        triggered ? { clearDraft: true } : undefined,
+      );
     }
 
     if (!bridge) {

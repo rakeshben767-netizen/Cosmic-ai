@@ -26,6 +26,7 @@ export interface CosmicFeaturesConfig {
   motivationalTapori: boolean;
   newsCommentary: boolean;
   customSlang: boolean;
+  speechRate: number;
 }
 
 export const DEFAULT_COSMIC_FEATURES: CosmicFeaturesConfig = {
@@ -39,6 +40,7 @@ export const DEFAULT_COSMIC_FEATURES: CosmicFeaturesConfig = {
   motivationalTapori: true,
   newsCommentary: true,
   customSlang: true,
+  speechRate: 1.0,
 };
 
 export type SafeActionName =
@@ -74,7 +76,7 @@ export interface PendingWhatsAppDraft {
 
 export interface TranscriptEntry {
   id: string;
-  speaker: 'user' | 'cosmic' | 'system';
+  speaker: 'user' | 'cosmic';
   text: string;
   timestamp: number;
   mode: CosmicMode;

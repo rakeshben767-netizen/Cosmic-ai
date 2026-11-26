@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   base64ToUint8,
+  clampSpeechRate,
+  computePlaybackDuration,
   computeRmsLevel,
   float32ToInt16Pcm,
   int16BytesToFloat32,
@@ -61,4 +63,16 @@ test('resampleFloat32 downsamples 48kHz to 16kHz by 3x accurately', () => {
   assert.equal(resampled.length, 160);
   const rms = computeRmsLevel(resampled);
   assert.ok(rms > 0.5 && rms <= 1);
+});
+
+test('clampSpeechRate and computePlaybackDuration normalize bounds and chunk timing', () => {
+  assert.equal(clampSpeechRate(undefined), 1.0);
+  assert.equal(clampSpeechRate(Number.NaN), 1.0);
+  assert.equal(clampSpeechRate(0.2), 0.75);
+  assert.equal(clampSpeechRate(2.4), 1.5);
+  assert.equal(clampSpeechRate(1.15000001), 1.15);
+
+  assert.equal(computePlaybackDuration(1.0, 1.25), 0.8);
+  assert.equal(computePlaybackDuration(1.0, 0.8), 1.25);
+  assert.equal(computePlaybackDuration(0, 1.2), 0);
 });

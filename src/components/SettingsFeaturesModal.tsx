@@ -2,8 +2,10 @@ import { useState } from 'react';
 import {
   Activity,
   ExternalLink,
+  Gauge,
   Globe,
   Mic,
+  RotateCcw,
   Search,
   Settings2,
   Sliders,
@@ -21,6 +23,12 @@ import type {
   RapBattleStyle,
   TranscriptEntry,
 } from '../types/cosmic.ts';
+import {
+  clampSpeechRate,
+  DEFAULT_SPEECH_RATE,
+  MAX_SPEECH_RATE,
+  MIN_SPEECH_RATE,
+} from '../utils/pcmAudio.ts';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer.tsx';
 
 interface SettingsFeaturesModalProps {
@@ -45,7 +53,7 @@ interface SettingsFeaturesModalProps {
 }
 
 const OPTIONAL_FEATURE_ITEMS: Array<{
-  key: Exclude<keyof CosmicFeaturesConfig, 'rapBattleStyle'>;
+  key: Exclude<keyof CosmicFeaturesConfig, 'rapBattleStyle' | 'speechRate'>;
   label: string;
   description: string;
 }> = [
@@ -264,6 +272,101 @@ export function SettingsFeaturesModal({
                   Retries: <strong className="text-slate-100">{diagnostics.retryCount}</strong>
                 </span>
               </div>
+
+              {/* AI Voice Speech Rate Slider (Normal & Badmash Modes) */}
+              {(() => {
+                const currentSpeechRate = clampSpeechRate(features.speechRate);
+                const isModified = Math.abs(currentSpeechRate - DEFAULT_SPEECH_RATE) > 0.001;
+                const speedPresets = [0.85, 1.0, 1.25, 1.5];
+                return (
+                  <div className="rounded-xl border border-white/10 bg-[#131726]/70 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="cosmic-speech-rate-slider"
+                        className="flex items-center gap-1.5 font-semibold text-white"
+                      >
+                        <Gauge
+                          className={`h-3.5 w-3.5 ${
+                            mode === 'badmash' ? 'text-purple-300' : 'text-sky-400'
+                          }`}
+                        />
+                        <span>AI Speech Rate</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <span
+                          data-testid="speech-rate-value"
+                          className={`font-mono text-xs font-bold tabular-nums ${
+                            mode === 'badmash' ? 'text-purple-200' : 'text-sky-300'
+                          }`}
+                        >
+                          {currentSpeechRate.toFixed(2)}x
+                        </span>
+                        {isModified && (
+                          <button
+                            type="button"
+                            onClick={() => onUpdateFeatures({ speechRate: DEFAULT_SPEECH_RATE })}
+                            data-testid="speech-rate-reset"
+                            className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                          >
+                            <RotateCcw className="h-2.5 w-2.5" />
+                            <span>Reset</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Adjusts AI response voice speed for both Normal and Badmash modes.
+                    </p>
+
+                    <div className="mt-3">
+                      <input
+                        id="cosmic-speech-rate-slider"
+                        data-testid="speech-rate-slider"
+                        type="range"
+                        min={MIN_SPEECH_RATE}
+                        max={MAX_SPEECH_RATE}
+                        step={0.05}
+                        value={currentSpeechRate}
+                        aria-label="AI Speech Rate"
+                        onChange={(e) =>
+                          onUpdateFeatures({ speechRate: Number.parseFloat(e.target.value) })
+                        }
+                        className={`h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-[#090b12] ${
+                          mode === 'badmash' ? 'accent-purple-400' : 'accent-sky-400'
+                        }`}
+                      />
+                      <div className="mt-1.5 flex items-center justify-between font-mono text-[10px] text-slate-400 tabular-nums">
+                        <span>0.75x Slower</span>
+                        <span>1.00x Normal</span>
+                        <span>1.50x Faster</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                      {speedPresets.map((preset) => {
+                        const active = Math.abs(currentSpeechRate - preset) < 0.01;
+                        return (
+                          <button
+                            key={preset}
+                            type="button"
+                            data-testid={`speech-rate-preset-${preset}`}
+                            onClick={() => onUpdateFeatures({ speechRate: preset })}
+                            className={`rounded-md border px-2.5 py-1 font-mono text-[11px] font-medium tabular-nums transition-colors ${
+                              active
+                                ? mode === 'badmash'
+                                  ? 'border-purple-400 bg-purple-500/30 text-white'
+                                  : 'border-sky-400 bg-sky-500/30 text-white'
+                                : 'border-white/12 bg-white/5 text-slate-300 hover:bg-white/10'
+                            }`}
+                          >
+                            {preset.toFixed(preset === 1 ? 1 : 2).replace(/\.00$/, '.0')}x
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="rounded-xl border border-white/10 bg-[#131726]/70 p-3">
                 <div className="mb-2.5 flex items-center gap-1.5">

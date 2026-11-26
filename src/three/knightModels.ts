@@ -1,1267 +1,805 @@
 import * as THREE from 'three';
-import type { ProceduralTextureSet } from './proceduralTextures.ts';
+import type { CosmicMode, CosmicState } from '../types/cosmic.ts';
+import {
+  createLightningBladeTexture,
+  createPedestalRingTexture,
+  createPortalVortexTexture,
+} from './proceduralTextures.ts';
 
-export interface KnightRigHandle {
+export interface KnightRig {
+  mode: CosmicMode;
   root: THREE.Group;
-  upperBody: THREE.Group;
-  upperBodyBaseY: number;
-  isSeated?: boolean;
+  bodyGroup: THREE.Group;
   headGroup: THREE.Group;
+  torsoGroup: THREE.Group;
   rightArmGroup: THREE.Group;
   leftArmGroup: THREE.Group;
   swordGroup: THREE.Group;
-  capeFronds: THREE.Mesh[];
-  haloRing?: THREE.Group;
-  haloPortal?: THREE.Mesh;
+  capeGroup: THREE.Group;
+  portalDisc: THREE.Mesh | null;
+  haloGroup: THREE.Group | null;
   emissiveMaterials: THREE.MeshStandardMaterial[];
-  auraLight: THREE.PointLight;
-  dispose: () => void;
+  baseEmissiveIntensity: number;
 }
 
-function normalizeUv01(geo: THREE.BufferGeometry): void {
-  geo.computeBoundingBox();
-  const bb = geo.boundingBox;
-  const pos = geo.attributes.position;
-  if (!bb || !pos) return;
-  const sizeX = Math.max(0.0001, bb.max.x - bb.min.x);
-  const sizeY = Math.max(0.0001, bb.max.y - bb.min.y);
-  const uv = new Float32Array(pos.count * 2);
-  for (let i = 0; i < pos.count; i++) {
-    uv[i * 2] = (pos.getX(i) - bb.min.x) / sizeX;
-    uv[i * 2 + 1] = (pos.getY(i) - bb.min.y) / sizeY;
-  }
-  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-}
-
-function createBeveledShapeMesh(
-  points: Array<[number, number]>,
+function buildDiamondPlate(
+  width: number,
+  height: number,
   depth: number,
-  bevelSize: number,
   material: THREE.Material,
-  castShadow: boolean,
 ): THREE.Mesh {
   const shape = new THREE.Shape();
-  shape.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) {
-    shape.lineTo(points[i][0], points[i][1]);
-  }
+  const hw = width / 2;
+  const hh = height / 2;
+  shape.moveTo(0, hh);
+  shape.lineTo(hw, 0);
+  shape.lineTo(0, -hh);
+  shape.lineTo(-hw, 0);
   shape.closePath();
 
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: true,
-    bevelThickness: bevelSize,
-    bevelSize,
-    bevelSegments: 2,
-    steps: 1,
+    bevelThickness: depth * 0.25,
+    bevelSize: depth * 0.22,
+    bevelSegments: 1,
   });
   geo.center();
-  normalizeUv01(geo);
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.castShadow = castShadow;
-  mesh.receiveShadow = true;
-  return mesh;
+  return new THREE.Mesh(geo, material);
 }
 
-function buildLayeredPauldron(
-  side: -1 | 1,
-  armorMat: THREE.Material,
-  trimMat: THREE.Material,
-  glowMat: THREE.Material,
-  castShadow: boolean,
-  tierCount: number,
-): THREE.Group {
+function buildPentagonKneePlate(
+  width: number,
+  height: number,
+  depth: number,
+  material: THREE.Material,
+): THREE.Mesh {
+  const shape = new THREE.Shape();
+  const hw = width / 2;
+  const hh = height / 2;
+  shape.moveTo(0, hh);
+  shape.lineTo(hw, hh * 0.25);
+  shape.lineTo(hw * 0.68, -hh * 0.62);
+  shape.lineTo(0, -hh);
+  shape.lineTo(-hw * 0.68, -hh * 0.62);
+  shape.lineTo(-hw, hh * 0.25);
+  shape.closePath();
+
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: 0.015,
+    bevelSize: 0.015,
+    bevelSegments: 1,
+  });
+  geo.center();
+  return new THREE.Mesh(geo, material);
+}
+
+function buildChevronEmblem(material: THREE.Material): THREE.Mesh {
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.24, 0.14);
+  shape.lineTo(0, 0.02);
+  shape.lineTo(0.24, 0.14);
+  shape.lineTo(0, -0.2);
+  shape.closePath();
+
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.035,
+    bevelEnabled: true,
+    bevelThickness: 0.01,
+    bevelSize: 0.01,
+    bevelSegments: 1,
+  });
+  geo.center();
+  return new THREE.Mesh(geo, material);
+}
+
+function buildCapeMesh(colorHex: string, emissiveHex: string): THREE.Group {
   const group = new THREE.Group();
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.48, 0.0);
+  shape.lineTo(0.48, 0.0);
+  shape.lineTo(0.98, -1.78);
+  shape.lineTo(0.68, -1.58);
+  shape.lineTo(0.44, -1.94);
+  shape.lineTo(0.15, -1.68);
+  shape.lineTo(0.0, -2.02);
+  shape.lineTo(-0.18, -1.7);
+  shape.lineTo(-0.48, -1.96);
+  shape.lineTo(-0.7, -1.62);
+  shape.lineTo(-0.98, -1.84);
+  shape.closePath();
 
-  // 3 stacked overlapping crescent armor tiers (replaces generic sphere)
-  for (let t = 0; t < tierCount; t++) {
-    const scale = 1 - t * 0.14;
-    const plate = createBeveledShapeMesh(
-      [
-        [-0.14 * scale, 0.08 * scale],
-        [0.06 * scale, 0.13 * scale],
-        [0.18 * scale, 0.02 * scale],
-        [0.14 * scale, -0.09 * scale],
-        [-0.12 * scale, -0.06 * scale],
-      ],
-      0.22 * scale,
-      0.016,
-      t === 0 ? armorMat : trimMat,
-      castShadow,
-    );
-    plate.position.set(side * (0.04 + t * 0.055), 0.06 - t * 0.068, 0);
-    plate.rotation.z = side * -(0.35 + t * 0.24);
-    if (side === -1) {
-      plate.scale.x = -1;
-    }
-    group.add(plate);
+  const geo = new THREE.ShapeGeometry(shape);
+  const mat = new THREE.MeshStandardMaterial({
+    color: colorHex,
+    emissive: emissiveHex,
+    emissiveIntensity: 0.22,
+    roughness: 0.7,
+    metalness: 0.18,
+    side: THREE.DoubleSide,
+  });
 
-    // Outward blade spike on each tier
-    const spike = new THREE.Mesh(
-      new THREE.ConeGeometry(0.028 * scale, 0.17 * scale, 4),
-      trimMat,
-    );
-    spike.position.set(side * (0.16 + t * 0.03), 0.08 - t * 0.07, 0);
-    spike.rotation.z = side * -(1.15 + t * 0.18);
-    group.add(spike);
-  }
-
-  // Front glowing shoulder node
-  const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.046, 1), glowMat);
-  orb.position.set(side * 0.06, 0.01, 0.125);
-  group.add(orb);
-
+  const capeMesh = new THREE.Mesh(geo, mat);
+  capeMesh.rotation.x = 0.2;
+  capeMesh.position.set(0, 0, -0.02);
+  group.add(capeMesh);
   return group;
 }
 
-function buildLegAssembly(
-  side: -1 | 1,
-  armorMat: THREE.MeshStandardMaterial,
-  darkSuitMat: THREE.MeshStandardMaterial,
-  trimMat: THREE.MeshStandardMaterial,
-  glowMat: THREE.MeshStandardMaterial,
-  castShadow: boolean,
-): THREE.Group {
-  const leg = new THREE.Group();
-  const hipX = side * 0.19;
-  leg.position.set(hipX, 1.12, 0);
-  // Heroic wide A-stance: left leg (-1) angles to -X, right leg (+1) angles to +X
-  leg.rotation.z = side * 0.15;
+function buildPedestal(mode: CosmicMode): {
+  group: THREE.Group;
+  ringEmissive: THREE.MeshStandardMaterial;
+} {
+  const isBadmash = mode === 'badmash';
+  const primaryHex = isBadmash ? '#a855f7' : '#38bdf8';
+  const glowHex = isBadmash ? '#e879f9' : '#7dd3fc';
 
-  // Thigh under-suit
-  const thighCore = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.36, 6, 12), darkSuitMat);
-  thighCore.position.set(0, -0.24, 0);
-  thighCore.castShadow = castShadow;
-  leg.add(thighCore);
+  const group = new THREE.Group();
 
-  // Sculpted angled thigh armor cuisse
-  const thighPlate = createBeveledShapeMesh(
-    [
-      [-0.115, 0.23],
-      [0.115, 0.23],
-      [0.095, -0.2],
-      [0, -0.27],
-      [-0.095, -0.2],
-    ],
-    0.13,
-    0.018,
-    armorMat,
-    castShadow,
-  );
-  thighPlate.position.set(0, -0.23, 0.045);
-  leg.add(thighPlate);
+  const outerMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#2b2438' : '#253142',
+    metalness: 0.85,
+    roughness: 0.28,
+  });
+  const baseGeo = new THREE.CylinderGeometry(1.76, 2.08, 0.24, 64);
+  const baseMesh = new THREE.Mesh(baseGeo, outerMat);
+  baseMesh.position.y = -0.14;
+  baseMesh.receiveShadow = true;
+  group.add(baseMesh);
 
-  // Angular Knee Poleyn + Glowing Chevron Trim
-  const knee = createBeveledShapeMesh(
-    [
-      [0, 0.13],
-      [0.095, 0.02],
-      [0.065, -0.11],
-      [0, -0.15],
-      [-0.065, -0.11],
-      [-0.095, 0.02],
-    ],
-    0.11,
-    0.016,
-    trimMat,
-    castShadow,
-  );
-  knee.rotation.x = -0.18;
-  knee.position.set(0, -0.52, 0.11);
-  leg.add(knee);
+  const ringTex = createPedestalRingTexture(primaryHex, glowHex);
+  const topMat = new THREE.MeshStandardMaterial({
+    map: ringTex,
+    emissiveMap: ringTex,
+    emissive: new THREE.Color(primaryHex),
+    emissiveIntensity: 0.78,
+    metalness: 0.45,
+    roughness: 0.4,
+  });
+  const topGeo = new THREE.CylinderGeometry(1.75, 1.75, 0.04, 64);
+  const topMesh = new THREE.Mesh(topGeo, topMat);
+  topMesh.position.y = -0.01;
+  topMesh.receiveShadow = true;
+  group.add(topMesh);
 
-  const kneeGlow = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.022, 0.04), glowMat);
-  kneeGlow.position.set(0, -0.55, 0.155);
-  leg.add(kneeGlow);
+  const rimMat = new THREE.MeshStandardMaterial({
+    color: glowHex,
+    emissive: primaryHex,
+    emissiveIntensity: 1.15,
+    metalness: 0.5,
+    roughness: 0.25,
+  });
+  const rimMesh = new THREE.Mesh(new THREE.TorusGeometry(1.76, 0.014, 12, 72), rimMat);
+  rimMesh.rotation.x = Math.PI / 2;
+  rimMesh.position.y = 0.01;
+  group.add(rimMesh);
 
-  // Shin Greave
-  const greave = new THREE.Mesh(new THREE.CylinderGeometry(0.098, 0.075, 0.5, 8), armorMat);
-  greave.position.set(0, -0.82, 0.01);
-  greave.castShadow = castShadow;
-  leg.add(greave);
-
-  const shinRidge = createBeveledShapeMesh(
-    [
-      [-0.052, 0.24],
-      [0.052, 0.24],
-      [0.032, -0.24],
-      [0, -0.28],
-      [-0.032, -0.24],
-    ],
-    0.075,
-    0.014,
-    trimMat,
-    castShadow,
-  );
-  shinRidge.position.set(0, -0.82, 0.075);
-  leg.add(shinRidge);
-
-  // Ankle spurs
-  for (let s = 0; s < 2; s++) {
-    const ankleSpike = new THREE.Mesh(new THREE.ConeGeometry(0.024, 0.13, 4), trimMat);
-    ankleSpike.rotation.z = side * -(0.85 + s * 0.25);
-    ankleSpike.position.set(side * 0.085, -0.95 - s * 0.05, -0.02);
-    leg.add(ankleSpike);
-  }
-
-  // Sabaton (armored boot) flat on ground at y = 0
-  const foot = createBeveledShapeMesh(
-    [
-      [-0.078, 0.09],
-      [0.078, 0.09],
-      [0.085, -0.09],
-      [0, -0.18],
-      [-0.085, -0.09],
-    ],
-    0.1,
-    0.014,
-    armorMat,
-    castShadow,
-  );
-  foot.rotation.x = Math.PI / 2;
-  foot.rotation.z = -side * 0.15;
-  foot.position.set(-side * 0.02, -1.07, 0.11);
-  leg.add(foot);
-
-  const toeCap = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.14, 4), trimMat);
-  toeCap.rotation.x = Math.PI / 2;
-  toeCap.position.set(-side * 0.02, -1.08, 0.26);
-  leg.add(toeCap);
-
-  return leg;
+  return { group, ringEmissive: rimMat };
 }
 
-export function createBlueKnightRig(
-  textures: ProceduralTextureSet,
-  castShadow: boolean,
-): KnightRigHandle {
+function buildSword(
+  mode: CosmicMode,
+  trimMat: THREE.Material,
+  gemMat: THREE.MeshStandardMaterial,
+): THREE.Group {
+  const isBadmash = mode === 'badmash';
+  const sword = new THREE.Group();
+
+  const gripMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#1c1824' : '#334155',
+    metalness: 0.72,
+    roughness: 0.36,
+  });
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 0.46, 14), gripMat);
+  grip.position.y = 0.22;
+  sword.add(grip);
+
+  // Pommel
+  if (isBadmash) {
+    const pommelWing = buildDiamondPlate(0.28, 0.14, 0.07, trimMat);
+    pommelWing.position.y = 0.46;
+    sword.add(pommelWing);
+    const pommelGem = buildDiamondPlate(0.14, 0.16, 0.08, gemMat);
+    pommelGem.position.set(0, 0.47, 0.02);
+    sword.add(pommelGem);
+  } else {
+    const pommel = buildDiamondPlate(0.12, 0.18, 0.08, trimMat);
+    pommel.position.y = 0.48;
+    sword.add(pommel);
+  }
+
+  // Winged Crossguard
+  const guardShape = new THREE.Shape();
+  guardShape.moveTo(-0.56, 0.16);
+  guardShape.lineTo(0, 0.03);
+  guardShape.lineTo(0.56, 0.16);
+  guardShape.lineTo(0.38, -0.08);
+  guardShape.lineTo(0, -0.22);
+  guardShape.lineTo(-0.38, -0.08);
+  guardShape.closePath();
+
+  const guardGeo = new THREE.ExtrudeGeometry(guardShape, {
+    depth: 0.09,
+    bevelEnabled: true,
+    bevelThickness: 0.015,
+    bevelSize: 0.015,
+    bevelSegments: 1,
+  });
+  guardGeo.center();
+  const guardMesh = new THREE.Mesh(guardGeo, trimMat);
+  guardMesh.position.y = -0.02;
+  sword.add(guardMesh);
+
+  const guardGem = buildDiamondPlate(0.13, 0.2, 0.11, gemMat);
+  guardGem.position.set(0, -0.02, 0.02);
+  sword.add(guardGem);
+
+  // Broadsword Blade with glowing procedural lightning texture
+  const bladeTex = createLightningBladeTexture(isBadmash ? 'purple' : 'blue');
+  const bladeShape = new THREE.Shape();
+  bladeShape.moveTo(-0.23, 0);
+  bladeShape.lineTo(0.23, 0);
+  bladeShape.lineTo(0.26, -1.28);
+  bladeShape.lineTo(0, -1.64);
+  bladeShape.lineTo(-0.26, -1.28);
+  bladeShape.closePath();
+
+  const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, {
+    depth: 0.05,
+    bevelEnabled: true,
+    bevelThickness: 0.012,
+    bevelSize: 0.012,
+    bevelSegments: 1,
+  });
+
+  const posAttr = bladeGeo.attributes.position;
+  const uvArr = new Float32Array(posAttr.count * 2);
+  for (let i = 0; i < posAttr.count; i++) {
+    const x = posAttr.getX(i);
+    const y = posAttr.getY(i);
+    uvArr[i * 2] = (x + 0.26) / 0.52;
+    uvArr[i * 2 + 1] = 1 - Math.max(0, Math.min(1, -y / 1.64));
+  }
+  bladeGeo.setAttribute('uv', new THREE.BufferAttribute(uvArr, 2));
+
+  const bladeMat = new THREE.MeshStandardMaterial({
+    map: bladeTex,
+    emissiveMap: bladeTex,
+    emissive: new THREE.Color(isBadmash ? '#c084fc' : '#38bdf8'),
+    emissiveIntensity: isBadmash ? 1.25 : 1.15,
+    metalness: 0.3,
+    roughness: 0.2,
+    transparent: !isBadmash,
+    opacity: isBadmash ? 1 : 0.94,
+  });
+
+  const bladeMesh = new THREE.Mesh(bladeGeo, bladeMat);
+  bladeMesh.position.set(0, -0.1, -0.025);
+  sword.add(bladeMesh);
+
+  return sword;
+}
+
+export function buildCosmicKnightRig(mode: CosmicMode): KnightRig {
+  const isBadmash = mode === 'badmash';
   const root = new THREE.Group();
-  const disposables: Array<{ dispose: () => void }> = [];
-  const track = <T extends { dispose: () => void }>(item: T): T => {
-    disposables.push(item);
-    return item;
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const emissiveMaterials: THREE.MeshStandardMaterial[] = [];
+
+  const pedestal = buildPedestal(mode);
+  root.add(pedestal.group);
+  emissiveMaterials.push(pedestal.ringEmissive);
+
+  const armorDarkMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#090710' : '#091122',
+    metalness: 0.88,
+    roughness: 0.24,
+  });
+
+  const armorSlateMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#2b233b' : '#2d3b52',
+    metalness: 0.78,
+    roughness: 0.32,
+  });
+
+  const armorTrimMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#4b3d63' : '#4a5d7c',
+    metalness: 0.85,
+    roughness: 0.26,
+  });
+
+  const shinAccentMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#e2d9f3' : '#dbeafe',
+    metalness: 0.55,
+    roughness: 0.25,
+  });
+
+  const coreGlowMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#f3e8ff' : '#e0f2fe',
+    emissive: isBadmash ? '#c084fc' : '#38bdf8',
+    emissiveIntensity: 1.45,
+    metalness: 0.15,
+    roughness: 0.15,
+  });
+  emissiveMaterials.push(coreGlowMat);
+
+  const orbGlowMat = new THREE.MeshStandardMaterial({
+    color: isBadmash ? '#ede9fe' : '#cffafe',
+    emissive: isBadmash ? '#a855f7' : '#22d3ee',
+    emissiveIntensity: 1.3,
+    metalness: 0.2,
+    roughness: 0.2,
+  });
+  emissiveMaterials.push(orbGlowMat);
+
+  // =====================================
+  // LEGS & BOOTS
+  // =====================================
+  const buildLeg = (side: -1 | 1) => {
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.32, 0.02, 0);
+
+    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.34), armorDarkMat);
+    boot.position.set(0, 0.08, 0.05);
+    boot.castShadow = true;
+    leg.add(boot);
+
+    const toeGem = buildDiamondPlate(0.08, 0.09, 0.04, armorTrimMat);
+    toeGem.position.set(0, 0.08, 0.22);
+    leg.add(toeGem);
+
+    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.095, 0.68, 8), armorDarkMat);
+    shin.position.set(0, 0.48, 0);
+    shin.castShadow = true;
+    leg.add(shin);
+
+    const shinBar = new THREE.Mesh(
+      new THREE.BoxGeometry(0.036, 0.58, 0.12),
+      armorTrimMat,
+    );
+    shinBar.position.set(side * 0.095, 0.48, 0.02);
+    leg.add(shinBar);
+
+    for (let s = 0; s < 2; s++) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.14, 5), armorTrimMat);
+      spike.rotation.z = -side * (1.15 - s * 0.2);
+      spike.position.set(side * 0.13, 0.22 + s * 0.07, 0);
+      leg.add(spike);
+    }
+
+    const knee = buildPentagonKneePlate(0.24, 0.32, 0.07, shinAccentMat);
+    knee.position.set(0, 0.85, 0.11);
+    knee.castShadow = true;
+    leg.add(knee);
+
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.145, 0.12, 0.56, 8), armorDarkMat);
+    thigh.position.set(0, 1.15, 0);
+    thigh.castShadow = true;
+    leg.add(thigh);
+
+    return leg;
   };
 
-  const blackArmorMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x161a28,
-      metalness: 0.88,
-      roughness: 0.28,
-      bumpMap: textures.armorBump,
-      bumpScale: 0.015,
-      roughnessMap: textures.armorRoughness,
-    }),
-  );
+  bodyGroup.add(buildLeg(-1));
+  bodyGroup.add(buildLeg(1));
 
-  const gunmetalTrimMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x38435e,
-      metalness: 0.92,
-      roughness: 0.22,
-    }),
-  );
-
-  const darkSuitMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x0e1018,
-      metalness: 0.18,
-      roughness: 0.72,
-    }),
-  );
-
-  const hairMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x0c0e15,
-      metalness: 0.22,
-      roughness: 0.68,
-    }),
-  );
-
-  const cyanGlowMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x0ea5e9,
-      emissive: 0x00c8ff,
-      emissiveIntensity: 1.05,
-      metalness: 0.2,
-      roughness: 0.18,
-    }),
-  );
-
-  const subtleBlueAccentMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x1d4ed8,
-      emissive: 0x1e40af,
-      emissiveIntensity: 1.1,
-      metalness: 0.3,
-      roughness: 0.25,
-    }),
-  );
-
-  const capeMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x141825,
-      emissive: 0x09223a,
-      emissiveIntensity: 0.38,
-      metalness: 0.14,
-      roughness: 0.78,
-      side: THREE.DoubleSide,
-    }),
-  );
-
-  const swordBladeCoreMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      map: textures.blueSwordEnergy,
-      emissive: 0x0ea5e9,
-      emissiveMap: textures.blueSwordEnergy,
-      emissiveIntensity: 1.35,
-      metalness: 0.35,
-      roughness: 0.2,
-    }),
-  );
-
-  const swordEdgeMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x8be9ff,
-      emissive: 0x0284c7,
-      emissiveIntensity: 0.7,
-      metalness: 0.88,
-      roughness: 0.16,
-    }),
-  );
-
-  // Grounded Wide-Stance Legs
-  root.add(buildLegAssembly(-1, blackArmorMat, darkSuitMat, gunmetalTrimMat, cyanGlowMat, castShadow));
-  root.add(buildLegAssembly(1, blackArmorMat, darkSuitMat, gunmetalTrimMat, cyanGlowMat, castShadow));
-
-  // Upper Body
-  const upperBody = new THREE.Group();
-  upperBody.position.set(0, 1.15, 0);
-  root.add(upperBody);
-
-  // Armored Belt & Tassets
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.19, 0.1, 8), gunmetalTrimMat);
-  belt.position.set(0, 0.04, 0);
-  upperBody.add(belt);
-
-  const frontTasset = createBeveledShapeMesh(
-    [
-      [-0.09, 0.22],
-      [0.09, 0.22],
-      [0.065, -0.22],
-      [0, -0.34],
-      [-0.065, -0.22],
-    ],
-    0.045,
-    0.014,
-    blackArmorMat,
-    castShadow,
-  );
-  frontTasset.rotation.x = -0.2;
-  frontTasset.position.set(0, -0.22, 0.19);
-  upperBody.add(frontTasset);
+  // =====================================
+  // PELVIS, HIP TASSETS & FRONT TABARD
+  // =====================================
+  const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.22, 0.42), armorDarkMat);
+  pelvis.position.set(0, 1.4, 0);
+  bodyGroup.add(pelvis);
 
   for (const side of [-1, 1] as const) {
-    const hipTasset = createBeveledShapeMesh(
-      [
-        [-0.075, 0.22],
-        [0.075, 0.22],
-        [0.125, -0.22],
-        [-0.09, -0.17],
-      ],
-      0.035,
-      0.01,
-      blackArmorMat,
-      castShadow,
-    );
-    hipTasset.rotation.z = side * 0.42;
-    hipTasset.rotation.y = side * 0.35;
-    hipTasset.position.set(side * 0.24, -0.14, 0.04);
-    upperBody.add(hipTasset);
+    const hipArmor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.44, 0.38), armorDarkMat);
+    hipArmor.position.set(side * 0.34, 1.24, 0.02);
+    hipArmor.rotation.z = side * 0.12;
+    bodyGroup.add(hipArmor);
   }
 
-  // Sculpted V-Tapered Abdomen & Cuirass
-  const abdomen = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.175, 0.34, 8), darkSuitMat);
-  abdomen.position.set(0, 0.25, 0);
-  upperBody.add(abdomen);
+  const tabardShape = new THREE.Shape();
+  tabardShape.moveTo(-0.13, 0.34);
+  tabardShape.lineTo(0, 0.27);
+  tabardShape.lineTo(0.13, 0.34);
+  tabardShape.lineTo(0.12, -0.43);
+  tabardShape.lineTo(0, -0.64);
+  tabardShape.lineTo(-0.12, -0.43);
+  tabardShape.closePath();
 
-  for (let i = 0; i < 3; i++) {
-    const seg = createBeveledShapeMesh(
-      [
-        [-0.14 + i * 0.01, 0.028],
-        [0.14 - i * 0.01, 0.028],
-        [0.12 - i * 0.01, -0.028],
-        [-0.12 + i * 0.01, -0.028],
-      ],
-      0.16,
-      0.01,
-      blackArmorMat,
-      castShadow,
-    );
-    seg.position.set(0, 0.18 + i * 0.07, 0.04);
-    upperBody.add(seg);
+  const tabardGeo = new THREE.ExtrudeGeometry(tabardShape, {
+    depth: 0.05,
+    bevelEnabled: true,
+    bevelThickness: 0.012,
+    bevelSize: 0.012,
+    bevelSegments: 1,
+  });
+  tabardGeo.center();
 
-    const ribSlit = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.012, 0.03), subtleBlueAccentMat);
-    ribSlit.position.set(0, 0.18 + i * 0.07, 0.13);
-    upperBody.add(ribSlit);
+  if (isBadmash) {
+    const tabardOuter = new THREE.Mesh(tabardGeo, shinAccentMat);
+    tabardOuter.position.set(0, 1.07, 0.22);
+    bodyGroup.add(tabardOuter);
+
+    const innerStrip = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.72, 0.06), armorSlateMat);
+    innerStrip.position.set(0, 1.06, 0.235);
+    bodyGroup.add(innerStrip);
+
+    const beltDiamond = buildDiamondPlate(0.13, 0.17, 0.07, coreGlowMat);
+    beltDiamond.position.set(0, 1.4, 0.26);
+    bodyGroup.add(beltDiamond);
+  } else {
+    const tabardMesh = new THREE.Mesh(tabardGeo, shinAccentMat);
+    tabardMesh.position.set(0, 1.08, 0.23);
+    bodyGroup.add(tabardMesh);
   }
 
-  // Sculpted V-tapered Breastplate
-  const chestPlate = createBeveledShapeMesh(
-    [
-      [-0.29, 0.22],
-      [0.29, 0.22],
-      [0.26, 0.02],
-      [0.19, -0.19],
-      [0, -0.25],
-      [-0.19, -0.19],
-      [-0.26, 0.02],
-    ],
-    0.24,
-    0.028,
-    blackArmorMat,
-    castShadow,
-  );
-  chestPlate.position.set(0, 0.56, 0.03);
-  upperBody.add(chestPlate);
+  // =====================================
+  // TORSO, CHESTPLATE & CAPE
+  // =====================================
+  const torsoGroup = new THREE.Group();
+  torsoGroup.position.set(0, 1.5, 0);
+  bodyGroup.add(torsoGroup);
 
-  // Glowing Cyan V-shaped Chest Emblem
-  const chestCore = createBeveledShapeMesh(
-    [
-      [-0.11, 0.07],
-      [0, 0.005],
-      [0.11, 0.07],
-      [0, -0.09],
-    ],
-    0.04,
-    0.008,
-    cyanGlowMat,
-    false,
-  );
-  chestCore.position.set(0, 0.58, 0.18);
-  upperBody.add(chestCore);
+  const abdomen = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.26, 0.56, 12), armorSlateMat);
+  abdomen.position.y = 0.25;
+  torsoGroup.add(abdomen);
 
-  // Armored Collar
-  const collar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.14, 0.17, 0.13, 8, 1, true, Math.PI * 0.25, Math.PI * 1.5),
-    gunmetalTrimMat,
-  );
-  collar.rotation.y = Math.PI;
-  collar.position.set(0, 0.78, -0.01);
-  upperBody.add(collar);
+  const chestShape = new THREE.Shape();
+  chestShape.moveTo(-0.56, 0.36);
+  chestShape.lineTo(0.56, 0.36);
+  chestShape.lineTo(0.46, -0.2);
+  chestShape.lineTo(0.24, -0.3);
+  chestShape.lineTo(0.16, -0.22);
+  chestShape.lineTo(-0.16, -0.22);
+  chestShape.lineTo(-0.24, -0.3);
+  chestShape.lineTo(-0.46, -0.2);
+  chestShape.closePath();
 
-  // Head + Sleek Dark Faceplate + Cyan Visor + Full Spiky Black Hair
-  const headGroup = new THREE.Group();
-  headGroup.position.set(0, 0.96, 0.02);
-  upperBody.add(headGroup);
+  const chestGeo = new THREE.ExtrudeGeometry(chestShape, {
+    depth: 0.42,
+    bevelEnabled: true,
+    bevelThickness: 0.03,
+    bevelSize: 0.025,
+    bevelSegments: 2,
+  });
+  chestGeo.center();
+  const chestMesh = new THREE.Mesh(chestGeo, armorDarkMat);
+  chestMesh.position.set(0, 0.66, 0.04);
+  chestMesh.castShadow = true;
+  torsoGroup.add(chestMesh);
 
-  const helmBase = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 14), darkSuitMat);
-  helmBase.scale.set(0.9, 1.05, 1.0);
-  headGroup.add(helmBase);
-
-  const faceplate = createBeveledShapeMesh(
-    [
-      [-0.095, 0.055],
-      [0.095, 0.055],
-      [0.068, -0.11],
-      [0, -0.145],
-      [-0.068, -0.11],
-    ],
-    0.085,
-    0.014,
-    blackArmorMat,
-    castShadow,
-  );
-  faceplate.position.set(0, -0.03, 0.095);
-  headGroup.add(faceplate);
-
-  // Sharp glowing V-visor
-  const visorLeft = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.028), cyanGlowMat);
-  visorLeft.position.set(-0.038, 0.015, 0.15);
-  visorLeft.rotation.z = -0.22;
-  headGroup.add(visorLeft);
-
-  const visorRight = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.028), cyanGlowMat);
-  visorRight.position.set(0.038, 0.015, 0.15);
-  visorRight.rotation.z = 0.22;
-  headGroup.add(visorRight);
-
-  // Clean, stylish short textured black hairstyle + refined futuristic brow circlet (zero sharp spikes)
-  const hairCrownBase = new THREE.Mesh(
-    new THREE.SphereGeometry(0.146, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.56),
-    hairMat,
-  );
-  hairCrownBase.scale.set(0.95, 0.96, 1.04);
-  hairCrownBase.position.set(0, 0.025, -0.01);
-  headGroup.add(hairCrownBase);
-
-  // Subtle textured hair layers sweeping back and slightly angled at the temples (no cones)
-  const texturedLayers: Array<[number, number, number, number, number, number, number, number]> = [
-    // [x, y, z, rx, ry, rz, width, scaleY]
-    [0, 0.135, -0.015, -0.18, 0, 0, 0.125, 0.75],
-    [-0.055, 0.118, 0.02, -0.08, 0.22, 0.24, 0.082, 0.72],
-    [0.055, 0.118, 0.02, -0.08, -0.22, -0.24, 0.082, 0.72],
-    [-0.088, 0.068, -0.02, -0.12, 0.42, 0.36, 0.065, 0.85],
-    [0.088, 0.068, -0.02, -0.12, -0.42, -0.36, 0.065, 0.85],
-    [0, 0.092, -0.105, -0.55, 0, 0, 0.115, 0.85],
-  ];
-  for (const [lx, ly, lz, rx, ry, rz, halfW, sy] of texturedLayers) {
-    const lock = createBeveledShapeMesh(
-      [
-        [-halfW, 0.04],
-        [halfW, 0.04],
-        [halfW * 0.78, -0.045 * sy],
-        [0, -0.072 * sy],
-        [-halfW * 0.78, -0.045 * sy],
-      ],
-      0.065,
-      0.016,
-      hairMat,
-      castShadow,
-    );
-    lock.position.set(lx, ly, lz);
-    lock.rotation.set(rx, ry, rz);
-    headGroup.add(lock);
+  if (isBadmash) {
+    const chestDiamond = buildDiamondPlate(0.24, 0.34, 0.06, coreGlowMat);
+    chestDiamond.position.set(0, 0.67, 0.29);
+    torsoGroup.add(chestDiamond);
+  } else {
+    const chestChevron = buildChevronEmblem(coreGlowMat);
+    chestChevron.position.set(0, 0.68, 0.29);
+    torsoGroup.add(chestChevron);
   }
 
-  // Soft textured front side-part wave framing the forehead cleanly
-  const frontSweep = createBeveledShapeMesh(
-    [
-      [-0.085, 0.028],
-      [0.04, 0.042],
-      [0.095, 0.014],
-      [0.045, -0.018],
-      [-0.065, -0.012],
-    ],
-    0.042,
-    0.012,
-    hairMat,
-    castShadow,
+  const capeGroup = buildCapeMesh(
+    isBadmash ? '#5b32a3' : '#2d3b52',
+    isBadmash ? '#4c1d95' : '#0f172a',
   );
-  frontSweep.position.set(-0.01, 0.095, 0.098);
-  frontSweep.rotation.set(0.26, 0.1, 0.08);
-  headGroup.add(frontSweep);
+  capeGroup.position.set(0, 0.92, -0.22);
+  torsoGroup.add(capeGroup);
 
-  // Refined futuristic smooth brow circlet framing the visor
-  const browCirclet = new THREE.Mesh(
-    new THREE.TorusGeometry(0.118, 0.012, 8, 28, Math.PI * 1.18),
-    gunmetalTrimMat,
-  );
-  browCirclet.rotation.x = Math.PI / 2 - 0.18;
-  browCirclet.rotation.z = -Math.PI * 0.09;
-  browCirclet.position.set(0, 0.052, 0.028);
-  headGroup.add(browCirclet);
+  // =====================================
+  // SHOULDERS & ARMS
+  // =====================================
+  const buildShoulderPauldron = (side: -1 | 1): THREE.Group => {
+    const pauldron = new THREE.Group();
 
-  const browNode = new THREE.Mesh(new THREE.OctahedronGeometry(0.018, 0), cyanGlowMat);
-  browNode.scale.set(1.2, 0.75, 0.6);
-  browNode.position.set(0, 0.056, 0.145);
-  headGroup.add(browNode);
+    const mainCap = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.48), armorDarkMat);
+    mainCap.rotation.z = -side * 0.22;
+    mainCap.castShadow = true;
+    pauldron.add(mainCap);
 
-  // Right Arm + Layered Pauldron + Giant Blue Energy Greatsword
+    for (let i = 0; i < 3; i++) {
+      const layer = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.09, 0.42), armorTrimMat);
+      layer.position.set(side * (0.08 + i * 0.04), -0.18 - i * 0.08, 0);
+      layer.rotation.z = -side * (0.35 + i * 0.12);
+      pauldron.add(layer);
+    }
+
+    for (let s = 0; s < 3; s++) {
+      const spike = new THREE.Mesh(
+        new THREE.ConeGeometry(0.032, 0.16, 5),
+        armorTrimMat,
+      );
+      spike.rotation.z = -side * (1.25 - s * 0.22);
+      spike.position.set(side * (0.25 + s * 0.02), 0.1 - s * 0.1, 0.02);
+      pauldron.add(spike);
+    }
+
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.088, 16, 16), orbGlowMat);
+    orb.position.set(side * 0.05, -0.02, 0.23);
+    pauldron.add(orb);
+
+    return pauldron;
+  };
+
+  // Right arm (viewer left: -x) holding sword
   const rightArmGroup = new THREE.Group();
-  rightArmGroup.position.set(-0.34, 0.69, 0.02);
-  upperBody.add(rightArmGroup);
+  rightArmGroup.position.set(-0.68, 0.84, 0.02);
+  torsoGroup.add(rightArmGroup);
+  rightArmGroup.add(buildShoulderPauldron(-1));
 
-  rightArmGroup.add(buildLayeredPauldron(-1, blackArmorMat, gunmetalTrimMat, cyanGlowMat, castShadow, 3));
+  const rightUpperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.095, 0.44, 10), armorSlateMat);
+  rightUpperArm.position.set(-0.08, -0.3, 0.02);
+  rightUpperArm.rotation.z = -0.25;
+  rightArmGroup.add(rightUpperArm);
 
-  const rUpperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.24, 5, 10), darkSuitMat);
-  rUpperArm.position.set(-0.12, -0.16, 0.02);
-  rUpperArm.rotation.z = -0.42;
-  rightArmGroup.add(rUpperArm);
+  const rightForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.09, 0.46, 10), armorDarkMat);
+  rightForearm.position.set(-0.18, -0.58, 0.16);
+  rightForearm.rotation.set(0.45, 0, 0.55);
+  rightArmGroup.add(rightForearm);
 
-  const rForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.068, 0.28, 8), blackArmorMat);
-  rForearm.position.set(-0.24, -0.25, 0.15);
-  rForearm.rotation.set(-0.65, 0, -0.95);
-  rightArmGroup.add(rForearm);
+  const rightHand = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 14), armorDarkMat);
+  rightHand.position.set(-0.34, -0.7, 0.28);
+  rightArmGroup.add(rightHand);
 
-  const rGauntlet = new THREE.Mesh(new THREE.SphereGeometry(0.064, 10, 8), blackArmorMat);
-  rGauntlet.position.set(-0.29, -0.21, 0.25);
-  rightArmGroup.add(rGauntlet);
-
-  // Giant Blue Energy Greatsword (scaled cleanly so tip sits just above pedestal at y ~ 0.06)
-  const swordGroup = new THREE.Group();
-  swordGroup.position.set(-0.31, -0.21, 0.27);
-  swordGroup.rotation.set(0.03, 0.1, -0.04);
+  const swordGroup = buildSword(mode, armorTrimMat, coreGlowMat);
+  swordGroup.position.set(-0.36, -0.68, 0.34);
+  swordGroup.rotation.set(0.04, 0.12, -0.02);
   rightArmGroup.add(swordGroup);
 
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.027, 0.5, 8), darkSuitMat);
-  grip.position.set(0, 0.08, 0);
-  swordGroup.add(grip);
-
-  const pommel = new THREE.Mesh(new THREE.OctahedronGeometry(0.062, 0), gunmetalTrimMat);
-  pommel.scale.set(0.88, 1.35, 0.7);
-  pommel.position.set(0, 0.36, 0);
-  swordGroup.add(pommel);
-
-  const crossguard = createBeveledShapeMesh(
-    [
-      [-0.35, 0.09],
-      [-0.12, 0.05],
-      [0, 0.13],
-      [0.12, 0.05],
-      [0.35, 0.09],
-      [0.18, -0.07],
-      [0, -0.14],
-      [-0.18, -0.07],
-    ],
-    0.07,
-    0.014,
-    gunmetalTrimMat,
-    castShadow,
-  );
-  crossguard.position.set(0, -0.18, 0);
-  swordGroup.add(crossguard);
-
-  const hiltGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.066, 0), cyanGlowMat);
-  hiltGem.scale.set(0.75, 1.45, 0.55);
-  hiltGem.position.set(0, -0.2, 0.042);
-  swordGroup.add(hiltGem);
-
-  const bladeCore = createBeveledShapeMesh(
-    [
-      [-0.135, 0.62],
-      [0.135, 0.62],
-      [0.115, -0.52],
-      [0, -0.71],
-      [-0.115, -0.52],
-    ],
-    0.03,
-    0.009,
-    swordBladeCoreMat,
-    castShadow,
-  );
-  bladeCore.position.set(0, -0.84, 0);
-  swordGroup.add(bladeCore);
-
-  const bladeEdgeFrame = createBeveledShapeMesh(
-    [
-      [-0.17, 0.64],
-      [0.17, 0.64],
-      [0.145, -0.53],
-      [0, -0.75],
-      [-0.145, -0.53],
-    ],
-    0.016,
-    0.007,
-    swordEdgeMat,
-    false,
-  );
-  bladeEdgeFrame.position.set(0, -0.84, -0.002);
-  swordGroup.add(bladeEdgeFrame);
-
-  // Left Arm + Multi-Tiered Spiked Pauldron
+  // Left arm (viewer right: +x)
   const leftArmGroup = new THREE.Group();
-  leftArmGroup.position.set(0.34, 0.69, 0.02);
-  upperBody.add(leftArmGroup);
+  leftArmGroup.position.set(0.68, 0.84, 0.02);
+  torsoGroup.add(leftArmGroup);
+  leftArmGroup.add(buildShoulderPauldron(1));
 
-  leftArmGroup.add(buildLayeredPauldron(1, blackArmorMat, gunmetalTrimMat, cyanGlowMat, castShadow, 4));
+  const leftUpperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.095, 0.46, 10), armorSlateMat);
+  leftUpperArm.position.set(0.09, -0.32, 0);
+  leftUpperArm.rotation.z = 0.18;
+  leftArmGroup.add(leftUpperArm);
 
-  const lUpperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.24, 5, 10), darkSuitMat);
-  lUpperArm.position.set(0.1, -0.18, 0);
-  lUpperArm.rotation.z = 0.26;
-  leftArmGroup.add(lUpperArm);
+  const leftForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.095, 0.48, 10), armorDarkMat);
+  leftForearm.position.set(0.16, -0.68, 0.08);
+  leftForearm.rotation.set(0.28, 0, -0.06);
+  leftArmGroup.add(leftForearm);
 
-  const lForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.084, 0.068, 0.29, 8), blackArmorMat);
-  lForearm.position.set(0.17, -0.41, 0.08);
-  lForearm.rotation.set(-0.35, 0, 0.2);
-  leftArmGroup.add(lForearm);
-
-  const lWristOrb = new THREE.Mesh(new THREE.OctahedronGeometry(0.04, 1), cyanGlowMat);
-  lWristOrb.position.set(0.21, -0.39, 0.16);
-  leftArmGroup.add(lWristOrb);
-
-  const lHand = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 8), blackArmorMat);
-  lHand.position.set(0.15, -0.56, 0.14);
-  leftArmGroup.add(lHand);
-
-  // Flowing Tattered Cape Fronds
-  const capeFronds: THREE.Mesh[] = [];
-  const frondAngles = [-0.52, -0.26, 0, 0.26, 0.52];
-  for (let i = 0; i < frondAngles.length; i++) {
-    const frond = createBeveledShapeMesh(
-      [
-        [-0.15, 0.62],
-        [0.15, 0.62],
-        [0.24, -0.56],
-        [0.06, -0.76],
-        [-0.08, -0.6],
-        [-0.22, -0.73],
-      ],
-      0.012,
-      0.004,
-      capeMat,
-      castShadow,
-    );
-    frond.position.set(frondAngles[i] * 0.92, 0.06, -0.25 - Math.abs(frondAngles[i]) * 0.12);
-    frond.rotation.set(0.24, frondAngles[i] * 0.35, frondAngles[i] * 0.58);
-    upperBody.add(frond);
-    capeFronds.push(frond);
+  if (isBadmash) {
+    const forearmDiamond = buildDiamondPlate(0.12, 0.14, 0.05, orbGlowMat);
+    forearmDiamond.position.set(0.18, -0.75, 0.19);
+    leftArmGroup.add(forearmDiamond);
+  } else {
+    const forearmOrb = new THREE.Mesh(new THREE.SphereGeometry(0.062, 14, 14), orbGlowMat);
+    forearmOrb.position.set(0.18, -0.76, 0.18);
+    leftArmGroup.add(forearmOrb);
   }
 
-  const auraLight = new THREE.PointLight(0x22d3ee, 2.4, 5.5, 1.6);
-  auraLight.position.set(0, 1.55, 0.7);
-  root.add(auraLight);
+  const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 14), armorDarkMat);
+  leftHand.position.set(0.17, -0.95, 0.14);
+  leftArmGroup.add(leftHand);
 
-  return {
-    root,
-    upperBody,
-    upperBodyBaseY: 1.155,
-    isSeated: false,
-    headGroup,
-    rightArmGroup,
-    leftArmGroup,
-    swordGroup,
-    capeFronds,
-    emissiveMaterials: [cyanGlowMat, swordBladeCoreMat, swordEdgeMat],
-    auraLight,
-    dispose: () => {
-      disposables.forEach((d) => d.dispose());
-      root.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-        }
-      });
-    },
-  };
-}
+  // =====================================
+  // HEAD, VISOR / EYES & CREST CROWN
+  // =====================================
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 1.06, 0.03);
+  torsoGroup.add(headGroup);
 
-export function createPurpleKnightRig(
-  textures: ProceduralTextureSet,
-  castShadow: boolean,
-): KnightRigHandle {
-  const root = new THREE.Group();
-  const disposables: Array<{ dispose: () => void }> = [];
-  const track = <T extends { dispose: () => void }>(item: T): T => {
-    disposables.push(item);
-    return item;
-  };
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.16, 10), armorSlateMat);
+  neck.position.y = 0.04;
+  headGroup.add(neck);
 
-  const obsidianArmorMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x171422,
-      metalness: 0.9,
-      roughness: 0.24,
-      bumpMap: textures.armorBump,
-      bumpScale: 0.017,
-      roughnessMap: textures.armorRoughness,
-    }),
-  );
+  const helmSkull = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.16, 0.34, 8), armorDarkMat);
+  helmSkull.position.y = 0.24;
+  helmSkull.castShadow = true;
+  headGroup.add(helmSkull);
 
-  const gunmetalTrimMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x453b59,
-      metalness: 0.92,
+  const faceplateShape = new THREE.Shape();
+  faceplateShape.moveTo(-0.15, 0.15);
+  faceplateShape.lineTo(0.15, 0.15);
+  faceplateShape.lineTo(0.12, -0.11);
+  faceplateShape.lineTo(0, -0.19);
+  faceplateShape.lineTo(-0.12, -0.11);
+  faceplateShape.closePath();
+
+  const faceplateGeo = new THREE.ExtrudeGeometry(faceplateShape, {
+    depth: 0.06,
+    bevelEnabled: true,
+    bevelThickness: 0.01,
+    bevelSize: 0.01,
+    bevelSegments: 1,
+  });
+  faceplateGeo.center();
+  const faceplate = new THREE.Mesh(faceplateGeo, armorDarkMat);
+  faceplate.position.set(0, 0.24, 0.15);
+  headGroup.add(faceplate);
+
+  if (isBadmash) {
+    for (const side of [-1, 1] as const) {
+      const eye = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.026, 0.04), coreGlowMat);
+      eye.position.set(side * 0.062, 0.28, 0.19);
+      eye.rotation.z = side * 0.14;
+      headGroup.add(eye);
+    }
+    const helmCrest = buildDiamondPlate(0.11, 0.13, 0.06, shinAccentMat);
+    helmCrest.position.set(0, 0.44, 0.16);
+    headGroup.add(helmCrest);
+
+    for (const side of [-1, 1] as const) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.09, 0.22), armorSlateMat);
+      wing.position.set(side * 0.16, 0.39, 0.02);
+      wing.rotation.z = -side * 0.22;
+      headGroup.add(wing);
+    }
+  } else {
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.032, 0.04), coreGlowMat);
+    visor.position.set(0, 0.28, 0.19);
+    headGroup.add(visor);
+
+    const foreheadMark = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.04), shinAccentMat);
+    foreheadMark.position.set(0, 0.38, 0.17);
+    headGroup.add(foreheadMark);
+
+    for (let r = 0; r < 3; r++) {
+      const ridge = new THREE.Mesh(
+        new THREE.BoxGeometry(0.34 - r * 0.05, 0.075, 0.26 - r * 0.04),
+        armorSlateMat,
+      );
+      ridge.position.set(0, 0.42 + r * 0.045, -0.02 - r * 0.03);
+      ridge.rotation.x = -0.25;
+      headGroup.add(ridge);
+    }
+  }
+
+  // =====================================
+  // PURPLE KNIGHT LARGE HALO RING & PORTAL
+  // =====================================
+  let portalDisc: THREE.Mesh | null = null;
+  let haloGroup: THREE.Group | null = null;
+
+  if (isBadmash) {
+    haloGroup = new THREE.Group();
+    haloGroup.position.set(0, 2.02, -0.36);
+    bodyGroup.add(haloGroup);
+
+    const haloRingMat = new THREE.MeshStandardMaterial({
+      color: '#413556',
+      metalness: 0.86,
+      roughness: 0.25,
+    });
+    const haloInnerGlowMat = new THREE.MeshStandardMaterial({
+      color: '#e9d5ff',
+      emissive: '#a855f7',
+      emissiveIntensity: 1.35,
+      metalness: 0.3,
       roughness: 0.2,
-    }),
-  );
+    });
+    emissiveMaterials.push(haloInnerGlowMat);
 
-  const darkSuitMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x0d0b14,
-      metalness: 0.18,
-      roughness: 0.74,
-    }),
-  );
+    const outerTorus = new THREE.Mesh(new THREE.TorusGeometry(1.52, 0.048, 16, 72), haloRingMat);
+    haloGroup.add(outerTorus);
 
-  const violetGlowMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0xc084fc,
-      emissive: 0x9333ea,
-      emissiveIntensity: 1.45,
-      metalness: 0.24,
-      roughness: 0.18,
-    }),
-  );
+    const innerTorus = new THREE.Mesh(new THREE.TorusGeometry(1.44, 0.022, 12, 72), haloInnerGlowMat);
+    haloGroup.add(innerTorus);
 
-  const capeMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x161124,
-      emissive: 0x4c1d95,
-      emissiveIntensity: 0.5,
-      metalness: 0.16,
-      roughness: 0.78,
-      side: THREE.DoubleSide,
-    }),
-  );
+    for (let i = 0; i < 8; i++) {
+      const ang = (i * Math.PI * 2) / 8 + Math.PI / 2;
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.24, 6), haloRingMat);
+      spike.position.set(Math.cos(ang) * 1.62, Math.sin(ang) * 1.62, 0);
+      spike.rotation.z = ang - Math.PI / 2;
+      haloGroup.add(spike);
+    }
 
-  const swordCoreMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      map: textures.purpleSwordLightning,
-      emissive: 0xa855f7,
-      emissiveMap: textures.purpleSwordLightning,
-      emissiveIntensity: 1.45,
-      metalness: 0.35,
-      roughness: 0.2,
-    }),
-  );
-
-  const swordFrameMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x3b334f,
-      emissive: 0x6b21a8,
-      emissiveIntensity: 0.45,
-      metalness: 0.9,
-      roughness: 0.2,
-    }),
-  );
-
-  const portalDiscMat = track(
-    new THREE.MeshBasicMaterial({
-      map: textures.cosmicPortal,
+    const portalTex = createPortalVortexTexture();
+    const portalMat = new THREE.MeshBasicMaterial({
+      map: portalTex,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.94,
       side: THREE.DoubleSide,
       depthWrite: false,
-    }),
-  );
-
-  // Grounded Wide-Stance Legs
-  root.add(
-    buildLegAssembly(-1, obsidianArmorMat, darkSuitMat, gunmetalTrimMat, violetGlowMat, castShadow),
-  );
-  root.add(
-    buildLegAssembly(1, obsidianArmorMat, darkSuitMat, gunmetalTrimMat, violetGlowMat, castShadow),
-  );
-
-  // Upper Body
-  const upperBodyBaseY = 1.155;
-  const upperBody = new THREE.Group();
-  upperBody.position.set(0, upperBodyBaseY, 0);
-  root.add(upperBody);
-
-  // Floating Cosmic Portal Halo Ring behind Shoulders
-  const haloGroup = new THREE.Group();
-  haloGroup.position.set(0, 0.62, -0.34);
-  upperBody.add(haloGroup);
-
-  const haloPortal = new THREE.Mesh(new THREE.CircleGeometry(0.95, 48), portalDiscMat);
-  haloGroup.add(haloPortal);
-
-  const haloRing = new THREE.Group();
-  haloGroup.add(haloRing);
-
-  const outerRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.96, 0.045, 10, 48),
-    gunmetalTrimMat,
-  );
-  haloRing.add(outerRing);
-
-  const innerVioletRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.91, 0.016, 8, 48),
-    violetGlowMat,
-  );
-  haloRing.add(innerVioletRing);
-
-  for (let s = 0; s < 8; s++) {
-    const angle = (s * Math.PI * 2) / 8;
-    const starNodeGroup = new THREE.Group();
-    starNodeGroup.position.set(Math.cos(angle) * 0.97, Math.sin(angle) * 0.97, 0);
-    starNodeGroup.rotation.z = angle - Math.PI / 2;
-
-    const bezel = new THREE.Mesh(new THREE.OctahedronGeometry(0.058, 0), gunmetalTrimMat);
-    bezel.scale.set(0.95, 1.35, 0.52);
-    starNodeGroup.add(bezel);
-
-    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.036, 0), violetGlowMat);
-    gem.scale.set(0.85, 1.2, 0.65);
-    gem.position.set(0, 0, 0.026);
-    starNodeGroup.add(gem);
-
-    haloRing.add(starNodeGroup);
+    });
+    portalDisc = new THREE.Mesh(new THREE.CircleGeometry(1.42, 64), portalMat);
+    portalDisc.position.z = -0.02;
+    haloGroup.add(portalDisc);
   }
-
-  // Sculpted Armored Belt & Violet Crystal Clasp
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.19, 0.1, 8), gunmetalTrimMat);
-  belt.position.set(0, 0.04, 0);
-  upperBody.add(belt);
-
-  const beltCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.056, 0), violetGlowMat);
-  beltCrystal.scale.set(0.85, 1.15, 0.55);
-  beltCrystal.position.set(0, 0.045, 0.205);
-  upperBody.add(beltCrystal);
-
-  // Long Ornate Loincloth Banner with Central Violet Chevron Vein
-  const frontBanner = createBeveledShapeMesh(
-    [
-      [-0.095, 0.26],
-      [0.095, 0.26],
-      [0.075, -0.34],
-      [0, -0.46],
-      [-0.075, -0.34],
-    ],
-    0.04,
-    0.012,
-    obsidianArmorMat,
-    castShadow,
-  );
-  frontBanner.rotation.x = -0.14;
-  frontBanner.position.set(0, -0.27, 0.19);
-  upperBody.add(frontBanner);
-
-  const bannerVein = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.5, 0.025), violetGlowMat);
-  bannerVein.rotation.x = -0.14;
-  bannerVein.position.set(0, -0.25, 0.215);
-  upperBody.add(bannerVein);
-
-  for (const side of [-1, 1] as const) {
-    const hipTasset = createBeveledShapeMesh(
-      [
-        [-0.085, 0.25],
-        [0.085, 0.25],
-        [0.14, -0.26],
-        [-0.1, -0.2],
-      ],
-      0.036,
-      0.012,
-      obsidianArmorMat,
-      castShadow,
-    );
-    hipTasset.rotation.z = side * 0.44;
-    hipTasset.rotation.y = side * 0.34;
-    hipTasset.position.set(side * 0.24, -0.14, 0.05);
-    upperBody.add(hipTasset);
-  }
-
-  // Segmented Abdomen & Breastplate with Violet Crystal Crest
-  const abdomen = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.175, 0.34, 8), darkSuitMat);
-  abdomen.position.set(0, 0.25, 0);
-  upperBody.add(abdomen);
-
-  for (let i = 0; i < 3; i++) {
-    const seg = createBeveledShapeMesh(
-      [
-        [-0.14 + i * 0.01, 0.028],
-        [0.14 - i * 0.01, 0.028],
-        [0.12 - i * 0.01, -0.028],
-        [-0.12 + i * 0.01, -0.028],
-      ],
-      0.16,
-      0.01,
-      obsidianArmorMat,
-      castShadow,
-    );
-    seg.position.set(0, 0.18 + i * 0.07, 0.04);
-    upperBody.add(seg);
-
-    const ribSlit = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.012, 0.028), violetGlowMat);
-    ribSlit.position.set(0, 0.18 + i * 0.07, 0.13);
-    upperBody.add(ribSlit);
-  }
-
-  const chestPlate = createBeveledShapeMesh(
-    [
-      [-0.3, 0.22],
-      [0.3, 0.22],
-      [0.26, 0.02],
-      [0.19, -0.19],
-      [0, -0.25],
-      [-0.19, -0.19],
-      [-0.26, 0.02],
-    ],
-    0.24,
-    0.028,
-    obsidianArmorMat,
-    castShadow,
-  );
-  chestPlate.position.set(0, 0.56, 0.03);
-  upperBody.add(chestPlate);
-
-  const chestGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.072, 0), violetGlowMat);
-  chestGem.scale.set(0.85, 1.35, 0.55);
-  chestGem.position.set(0, 0.56, 0.185);
-  upperBody.add(chestGem);
-
-  // Armored Collar
-  const collar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.14, 0.17, 0.13, 8, 1, true, Math.PI * 0.25, Math.PI * 1.5),
-    gunmetalTrimMat,
-  );
-  collar.rotation.y = Math.PI;
-  collar.position.set(0, 0.78, -0.01);
-  upperBody.add(collar);
-
-  // Refined Dark Fantasy Helmet + Elegant Crown-Like Armor Details (excessive sharp head spikes removed)
-  const headGroup = new THREE.Group();
-  headGroup.position.set(0, 0.96, 0.02);
-  upperBody.add(headGroup);
-
-  const helmBase = new THREE.Mesh(new THREE.SphereGeometry(0.136, 20, 16), obsidianArmorMat);
-  helmBase.scale.set(0.92, 1.06, 1.04);
-  helmBase.castShadow = castShadow;
-  headGroup.add(helmBase);
-
-  const faceplate = createBeveledShapeMesh(
-    [
-      [-0.092, 0.06],
-      [0.092, 0.06],
-      [0.068, -0.115],
-      [0, -0.15],
-      [-0.068, -0.115],
-    ],
-    0.088,
-    0.013,
-    obsidianArmorMat,
-    castShadow,
-  );
-  faceplate.position.set(0, -0.025, 0.092);
-  headGroup.add(faceplate);
-
-  // Sleek Temple & Cheek Armor Plates
-  for (const side of [-1, 1] as const) {
-    const cheekPlate = createBeveledShapeMesh(
-      [
-        [-0.042, 0.065],
-        [0.042, 0.085],
-        [0.032, -0.075],
-        [-0.025, -0.095],
-      ],
-      0.045,
-      0.011,
-      gunmetalTrimMat,
-      castShadow,
-    );
-    cheekPlate.position.set(side * 0.105, -0.02, 0.03);
-    cheekPlate.rotation.y = side * 0.48;
-    cheekPlate.rotation.z = side * 0.12;
-    headGroup.add(cheekPlate);
-  }
-
-  // Piercing Violet V-Visor Slits
-  const visorLeft = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.018, 0.028), violetGlowMat);
-  visorLeft.position.set(-0.036, 0.018, 0.15);
-  visorLeft.rotation.z = -0.26;
-  headGroup.add(visorLeft);
-
-  const visorRight = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.018, 0.028), violetGlowMat);
-  visorRight.position.set(0.036, 0.018, 0.15);
-  visorRight.rotation.z = 0.26;
-  headGroup.add(visorRight);
-
-  // Smooth Central Helmet Crest Ridge (clean aerodynamic silhouette)
-  const helmCrest = createBeveledShapeMesh(
-    [
-      [-0.018, 0.055],
-      [0.018, 0.055],
-      [0.014, -0.04],
-      [-0.014, -0.04],
-    ],
-    0.2,
-    0.01,
-    gunmetalTrimMat,
-    castShadow,
-  );
-  helmCrest.rotation.x = 0.18;
-  helmCrest.position.set(0, 0.132, -0.01);
-  headGroup.add(helmCrest);
-
-  // Elegant Sculpted Royal Circlet & Low-Profile Crown Reliefs
-  const crownBand = new THREE.Mesh(
-    new THREE.TorusGeometry(0.124, 0.014, 10, 32),
-    gunmetalTrimMat,
-  );
-  crownBand.rotation.x = Math.PI / 2 - 0.12;
-  crownBand.position.set(0, 0.088, 0.008);
-  headGroup.add(crownBand);
-
-  const crownCrestFront = createBeveledShapeMesh(
-    [
-      [-0.065, -0.02],
-      [-0.038, 0.038],
-      [0, 0.072],
-      [0.038, 0.038],
-      [0.065, -0.02],
-    ],
-    0.028,
-    0.009,
-    gunmetalTrimMat,
-    castShadow,
-  );
-  crownCrestFront.position.set(0, 0.118, 0.118);
-  crownCrestFront.rotation.x = -0.18;
-  headGroup.add(crownCrestFront);
-
-  const crownJewel = new THREE.Mesh(new THREE.OctahedronGeometry(0.022, 0), violetGlowMat);
-  crownJewel.scale.set(0.85, 1.3, 0.6);
-  crownJewel.position.set(0, 0.114, 0.138);
-  headGroup.add(crownJewel);
-
-  // Right Arm (Viewer's Left) + Enormous Vertical Lightning Purple Greatsword
-  const rightArmGroup = new THREE.Group();
-  rightArmGroup.position.set(-0.34, 0.69, 0.02);
-  upperBody.add(rightArmGroup);
-
-  rightArmGroup.add(
-    buildLayeredPauldron(-1, obsidianArmorMat, gunmetalTrimMat, violetGlowMat, castShadow, 4),
-  );
-
-  const rUpperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.24, 5, 10), darkSuitMat);
-  rUpperArm.position.set(-0.14, -0.15, 0.02);
-  rUpperArm.rotation.z = -0.48;
-  rightArmGroup.add(rUpperArm);
-
-  const rForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.068, 0.28, 8), obsidianArmorMat);
-  rForearm.position.set(-0.27, -0.18, 0.16);
-  rForearm.rotation.set(-0.78, 0, -1.05);
-  rForearm.castShadow = castShadow;
-  rightArmGroup.add(rForearm);
-
-  const rGauntlet = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), obsidianArmorMat);
-  rGauntlet.position.set(-0.33, -0.14, 0.26);
-  rightArmGroup.add(rGauntlet);
-
-  // Towering Vertical Purple Lightning Greatsword (Grounded just above pedestal)
-  const swordGroup = new THREE.Group();
-  swordGroup.position.set(-0.35, -0.14, 0.28);
-  swordGroup.rotation.set(0.02, 0.08, -0.02);
-  rightArmGroup.add(swordGroup);
-
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.028, 0.48, 8), darkSuitMat);
-  grip.position.set(0, 0.08, 0);
-  swordGroup.add(grip);
-
-  const pommel = new THREE.Mesh(new THREE.OctahedronGeometry(0.068, 0), gunmetalTrimMat);
-  pommel.scale.set(1.2, 1.1, 0.7);
-  pommel.position.set(0, 0.34, 0);
-  swordGroup.add(pommel);
-
-  const pommelGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.036, 0), violetGlowMat);
-  pommelGem.position.set(0, 0.34, 0.04);
-  swordGroup.add(pommelGem);
-
-  const crossguard = createBeveledShapeMesh(
-    [
-      [-0.36, 0.13],
-      [-0.13, 0.06],
-      [0, 0.14],
-      [0.13, 0.06],
-      [0.36, 0.13],
-      [0.19, -0.08],
-      [0, -0.16],
-      [-0.19, -0.08],
-    ],
-    0.072,
-    0.015,
-    gunmetalTrimMat,
-    castShadow,
-  );
-  crossguard.position.set(0, -0.18, 0);
-  swordGroup.add(crossguard);
-
-  const guardCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.07, 0), violetGlowMat);
-  guardCrystal.scale.set(0.8, 1.35, 0.58);
-  guardCrystal.position.set(0, -0.19, 0.045);
-  swordGroup.add(guardCrystal);
-
-  const bladeCore = createBeveledShapeMesh(
-    [
-      [-0.155, 0.68],
-      [0.155, 0.68],
-      [0.135, -0.56],
-      [0, -0.78],
-      [-0.135, -0.56],
-    ],
-    0.034,
-    0.01,
-    swordCoreMat,
-    castShadow,
-  );
-  bladeCore.position.set(0, -0.92, 0);
-  swordGroup.add(bladeCore);
-
-  const bladeFrame = createBeveledShapeMesh(
-    [
-      [-0.19, 0.7],
-      [0.19, 0.7],
-      [0.165, -0.57],
-      [0, -0.82],
-      [-0.165, -0.57],
-    ],
-    0.018,
-    0.008,
-    swordFrameMat,
-    false,
-  );
-  bladeFrame.position.set(0, -0.92, -0.002);
-  swordGroup.add(bladeFrame);
-
-  // Left Arm (Viewer's Right) + Spiked Pauldron
-  const leftArmGroup = new THREE.Group();
-  leftArmGroup.position.set(0.34, 0.69, 0.02);
-  upperBody.add(leftArmGroup);
-
-  leftArmGroup.add(
-    buildLayeredPauldron(1, obsidianArmorMat, gunmetalTrimMat, violetGlowMat, castShadow, 4),
-  );
-
-  const lUpperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.24, 5, 10), darkSuitMat);
-  lUpperArm.position.set(0.11, -0.18, 0);
-  lUpperArm.rotation.z = 0.28;
-  leftArmGroup.add(lUpperArm);
-
-  const lForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.084, 0.068, 0.29, 8), obsidianArmorMat);
-  lForearm.position.set(0.18, -0.41, 0.08);
-  lForearm.rotation.set(-0.34, 0, 0.18);
-  lForearm.castShadow = castShadow;
-  leftArmGroup.add(lForearm);
-
-  const lWristCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.042, 0), violetGlowMat);
-  lWristCrystal.position.set(0.22, -0.39, 0.16);
-  leftArmGroup.add(lWristCrystal);
-
-  const lHand = new THREE.Mesh(new THREE.SphereGeometry(0.064, 10, 8), obsidianArmorMat);
-  lHand.position.set(0.16, -0.56, 0.14);
-  leftArmGroup.add(lHand);
-
-  // Tattered Shadow-Violet Cape Fronds
-  const capeFronds: THREE.Mesh[] = [];
-  const frondAngles = [-0.58, -0.3, 0, 0.3, 0.58];
-  for (let i = 0; i < frondAngles.length; i++) {
-    const frond = createBeveledShapeMesh(
-      [
-        [-0.16, 0.64],
-        [0.16, 0.64],
-        [0.25, -0.62],
-        [0.08, -0.84],
-        [-0.08, -0.64],
-        [-0.24, -0.8],
-      ],
-      0.012,
-      0.004,
-      capeMat,
-      castShadow,
-    );
-    frond.position.set(frondAngles[i] * 0.94, 0.04, -0.24 - Math.abs(frondAngles[i]) * 0.12);
-    frond.rotation.set(0.24, frondAngles[i] * 0.36, frondAngles[i] * 0.54);
-    upperBody.add(frond);
-    capeFronds.push(frond);
-  }
-
-  const auraLight = new THREE.PointLight(0xa855f7, 3.0, 6.0, 1.5);
-  auraLight.position.set(0, 1.55, 0.78);
-  root.add(auraLight);
 
   return {
+    mode,
     root,
-    upperBody,
-    upperBodyBaseY,
-    isSeated: false,
+    bodyGroup,
     headGroup,
+    torsoGroup,
     rightArmGroup,
     leftArmGroup,
     swordGroup,
-    capeFronds,
-    haloRing,
-    haloPortal,
-    emissiveMaterials: [violetGlowMat, swordCoreMat, capeMat],
-    auraLight,
-    dispose: () => {
-      disposables.forEach((d) => d.dispose());
-      root.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-        }
-      });
-    },
+    capeGroup,
+    portalDisc,
+    haloGroup,
+    emissiveMaterials,
+    baseEmissiveIntensity: isBadmash ? 1.3 : 1.18,
   };
+}
+
+export function animateKnightRig(
+  rig: KnightRig,
+  params: {
+    elapsed: number;
+    state: CosmicState;
+    audioLevel: number;
+  },
+): void {
+  const { elapsed, state, audioLevel } = params;
+  const isSpeaking = state === 'SPEAKING';
+  const isListening = state === 'LISTENING';
+  const isConnecting = state === 'CONNECTING' || state === 'RECONNECTING';
+  const isError = state === 'ERROR';
+
+  const breath = Math.sin(elapsed * (isSpeaking ? 3.2 : 1.8));
+  rig.torsoGroup.position.y = 1.5 + breath * (isSpeaking ? 0.022 : 0.01);
+  rig.headGroup.rotation.y = Math.sin(elapsed * 0.7) * (isListening ? 0.07 : 0.035);
+  rig.headGroup.rotation.x = isListening
+    ? -0.04 + Math.sin(elapsed * 2.1) * 0.025
+    : isSpeaking
+      ? Math.sin(elapsed * 5.2) * (0.03 + audioLevel * 0.06)
+      : Math.sin(elapsed * 1.1) * 0.015;
+
+  const speakLift = isSpeaking ? 0.03 + audioLevel * 0.14 : 0;
+  rig.rightArmGroup.rotation.x = -speakLift * 0.55 + Math.sin(elapsed * 1.6) * 0.02;
+  rig.leftArmGroup.rotation.x =
+    (isSpeaking ? -0.08 - audioLevel * 0.18 : 0) + Math.cos(elapsed * 1.4) * 0.025;
+  rig.leftArmGroup.rotation.z = isSpeaking ? 0.06 + audioLevel * 0.08 : 0;
+
+  rig.capeGroup.rotation.x = 0.04 + Math.sin(elapsed * 2.1) * (isSpeaking ? 0.05 : 0.025);
+
+  if (rig.portalDisc) {
+    rig.portalDisc.rotation.z = elapsed * (isSpeaking ? 0.55 : 0.22);
+  }
+  if (rig.haloGroup) {
+    rig.haloGroup.position.y = 2.02 + breath * 0.02;
+  }
+
+  let intensity = rig.baseEmissiveIntensity;
+  if (isSpeaking) {
+    intensity = rig.baseEmissiveIntensity + 0.5 + audioLevel * 1.9;
+  } else if (isListening) {
+    intensity = rig.baseEmissiveIntensity + 0.25 + Math.sin(elapsed * 4.5) * 0.2;
+  } else if (isConnecting) {
+    intensity = rig.baseEmissiveIntensity * (0.65 + 0.5 * Math.abs(Math.sin(elapsed * 3.8)));
+  } else if (isError) {
+    intensity = 0.45 + 0.35 * Math.abs(Math.sin(elapsed * 7));
+  }
+
+  for (const mat of rig.emissiveMaterials) {
+    mat.emissiveIntensity = intensity;
+  }
+}
+
+export function disposeObjectTree(root: THREE.Object3D): void {
+  const textures = new Set<THREE.Texture>();
+  const materials = new Set<THREE.Material>();
+  const geometries = new Set<THREE.BufferGeometry>();
+
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.geometry) {
+      geometries.add(mesh.geometry);
+    }
+    const matOrArr = mesh.material;
+    if (Array.isArray(matOrArr)) {
+      matOrArr.forEach((m) => materials.add(m));
+    } else if (matOrArr) {
+      materials.add(matOrArr);
+    }
+  });
+
+  materials.forEach((mat) => {
+    const m = mat as THREE.MeshStandardMaterial;
+    if (m.map) textures.add(m.map);
+    if (m.emissiveMap) textures.add(m.emissiveMap);
+    mat.dispose();
+  });
+
+  textures.forEach((tex) => tex.dispose());
+  geometries.forEach((geo) => geo.dispose());
 }

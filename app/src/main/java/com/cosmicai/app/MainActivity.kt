@@ -33,11 +33,12 @@ class MainActivity : AppCompatActivity() {
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-            val micGranted = results[Manifest.permission.RECORD_AUDIO] == true || hasRecordAudio()
             val pending = pendingWebPermissionRequest
             pendingWebPermissionRequest = null
             if (pending != null) {
-                if (micGranted) {
+                val needsAudio = pending.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                val audioOk = !needsAudio || results[Manifest.permission.RECORD_AUDIO] == true || hasPermission(Manifest.permission.RECORD_AUDIO)
+                if (audioOk) {
                     pending.grant(pending.resources)
                 } else {
                     pending.deny()
@@ -83,7 +84,7 @@ class MainActivity : AppCompatActivity() {
             .build()
 
         webView = WebView(this).apply {
-            setBackgroundColor(Color.parseColor("#0D101B"))
+            setBackgroundColor(Color.parseColor("#0c1220"))
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -100,7 +101,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val rootContainer = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#0D101B"))
+            setBackgroundColor(Color.parseColor("#0c1220"))
             addView(
                 webView,
                 FrameLayout.LayoutParams(
@@ -152,17 +153,16 @@ class MainActivity : AppCompatActivity() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
                 runOnUiThread {
-                    val needsAudio = request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
-                    if (needsAudio && !hasRecordAudio()) {
+                    val missing = mutableListOf<String>()
+                    if (request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE) &&
+                        !hasPermission(Manifest.permission.RECORD_AUDIO)
+                    ) {
+                        missing.add(Manifest.permission.RECORD_AUDIO)
+                    }
+                    if (missing.isNotEmpty()) {
                         pendingWebPermissionRequest?.deny()
                         pendingWebPermissionRequest = request
-                        requestPermissionsLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.RECORD_AUDIO,
-                                Manifest.permission.READ_CONTACTS,
-                                Manifest.permission.CALL_PHONE
-                            )
-                        )
+                        requestPermissionsLauncher.launch(missing.toTypedArray())
                     } else {
                         request.grant(request.resources)
                     }
@@ -181,30 +181,16 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        requestInitialPermissions()
         webView.loadUrl("https://appassets.androidplatform.net/index.html")
     }
 
-    private fun hasRecordAudio(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun requestInitialPermissions() {
-        if (!hasRecordAudio()) {
-            requestPermissionsLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
-        }
+    fun hasPermission(perm: String): Boolean {
+        return ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
     }
 
     fun requestContactsPermissionOnDemand() {
         runOnUiThread {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.READ_CONTACTS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
+            if (!hasPermission(Manifest.permission.READ_CONTACTS)) {
                 requestPermissionsLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS))
             }
         }

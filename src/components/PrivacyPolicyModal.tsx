@@ -42,9 +42,9 @@ export function PrivacyPolicyModal({ open, onClose }: PrivacyPolicyModalProps) {
             <h3 className="mb-1 font-semibold text-sky-300">1. Entertainment Purpose Only</h3>
             <p>
               COSMIC AI is created solely for entertainment purposes as a fun, interactive 3D AI
-              voice companion. All voice replies, jokes, and Badmash comedy banter are generated for
-              lighthearted amusement only and should not be taken seriously or treated as real-life,
-              professional, medical, or legal advice. The app runs completely ad-free.
+              voice companion. All voice replies, jokes, and Badmash comedy banter are generated
+              for lighthearted amusement only and should not be taken seriously or treated as
+              real-life, professional, medical, or legal advice. The app runs completely ad-free.
             </p>
           </section>
 
