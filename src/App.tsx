@@ -161,7 +161,7 @@ export default function App() {
           </span>
           <span className="text-slate-600">·</span>
           <span className="text-slate-200">
-            {isBadmash ? 'Purple Knight · Savage Mode' : 'Blue Knight · Normal Mode'}
+            {isBadmash ? 'Cosmic Ball · Savage Mode' : 'Cosmic Ball · Normal Mode'}
           </span>
           <span className="text-slate-600">·</span>
           <span className="text-slate-400">

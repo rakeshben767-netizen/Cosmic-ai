@@ -2,7 +2,13 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { CosmicMode, CosmicState } from '../types/cosmic.ts';
-import { animateKnightRig, buildCosmicKnightRig, disposeObjectTree, type KnightRig } from '../three/knightModels.ts';
+import {
+  animateCosmicOrbRig,
+  buildCosmicOrbRig,
+  COSMIC_ORB_CENTER_Y,
+  disposeObjectTree,
+  type CosmicOrbRig,
+} from '../three/cosmicOrbModel.ts';
 
 interface CosmicKnightCanvasProps {
   mode: CosmicMode;
@@ -12,9 +18,9 @@ interface CosmicKnightCanvasProps {
 }
 
 const DEFAULT_YAW = 0;
-const DEFAULT_PITCH = 0.14;
-const DEFAULT_RADIUS = 5.15;
-const TARGET_Y = 1.42;
+const DEFAULT_PITCH = 0.16;
+const DEFAULT_RADIUS = 4.65;
+const TARGET_Y = COSMIC_ORB_CENTER_Y - 0.12;
 
 const NORMAL_BG_COLOR = new THREE.Color('#0c1220');
 const BADMASH_BG_COLOR = new THREE.Color('#130b20');
@@ -54,11 +60,8 @@ export function CosmicKnightCanvas({
   const targetPitchRef = useRef(DEFAULT_PITCH);
   const radiusRef = useRef(DEFAULT_RADIUS);
 
-  const switchKnightFnRef = useRef<((nextMode: CosmicMode) => void) | null>(null);
-
   useEffect(() => {
     modeRef.current = mode;
-    switchKnightFnRef.current?.(mode);
   }, [mode]);
 
   useEffect(() => {
@@ -108,6 +111,11 @@ export function CosmicKnightCanvas({
     canvas.style.touchAction = 'none';
     container.appendChild(canvas);
 
+    const onContextLost = (ev: Event) => {
+      ev.preventDefault();
+    };
+    canvas.addEventListener('webglcontextlost', onContextLost, false);
+
     const scene = new THREE.Scene();
     const currentBg = (modeRef.current === 'badmash' ? BADMASH_BG_COLOR : NORMAL_BG_COLOR).clone();
     scene.background = currentBg;
@@ -125,7 +133,7 @@ export function CosmicKnightCanvas({
     const camera = new THREE.PerspectiveCamera(42, width / Math.max(height, 1), 0.1, 60);
 
     const updateCameraTransform = (aspect: number) => {
-      const mobileScale = aspect < 0.72 ? 1.08 : 1.0;
+      const mobileScale = aspect < 0.72 ? 1.12 : 1.0;
       const dist = radiusRef.current * mobileScale;
       const cosPitch = Math.cos(pitchRef.current);
       camera.position.set(
@@ -203,24 +211,13 @@ export function CosmicKnightCanvas({
     const particles = new THREE.Points(particleGeo, particleMat);
     scene.add(particles);
 
-    // Knight rig lifecycle + smooth transition
-    let activeRig: KnightRig = buildCosmicKnightRig(modeRef.current);
-    scene.add(activeRig.root);
-    let transitionProgress = 1;
+    // Single unified Cosmic Ball rig for both Normal and Badmash modes
+    const orbRig: CosmicOrbRig = buildCosmicOrbRig(modeRef.current, isSoftwareGl);
+    scene.add(orbRig.root);
 
     if (!isSoftwareGl) {
       renderer.compile(scene, camera);
     }
-
-    switchKnightFnRef.current = (nextMode: CosmicMode) => {
-      if (activeRig.mode === nextMode) return;
-      scene.remove(activeRig.root);
-      disposeObjectTree(activeRig.root);
-      activeRig = buildCosmicKnightRig(nextMode);
-      activeRig.root.scale.setScalar(0.92);
-      transitionProgress = 0;
-      scene.add(activeRig.root);
-    };
 
     // Pointer orbit interaction
     let isDragging = false;
@@ -241,7 +238,7 @@ export function CosmicKnightCanvas({
       lastX = e.clientX;
       lastY = e.clientY;
       targetYawRef.current += dx * 0.007;
-      targetPitchRef.current = Math.max(-0.12, Math.min(0.62, targetPitchRef.current + dy * 0.005));
+      targetPitchRef.current = Math.max(-0.18, Math.min(0.68, targetPitchRef.current + dy * 0.005));
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -251,7 +248,7 @@ export function CosmicKnightCanvas({
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      radiusRef.current = Math.max(3.6, Math.min(8.0, radiusRef.current + e.deltaY * 0.003));
+      radiusRef.current = Math.max(3.2, Math.min(7.8, radiusRef.current + e.deltaY * 0.003));
     };
 
     canvas.addEventListener('pointerdown', onPointerDown);
@@ -321,20 +318,16 @@ export function CosmicKnightCanvas({
       rimLight.color.lerp(isBadmash ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR, Math.min(1, dt * 5));
       particleMat.color.lerp(isBadmash ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR, Math.min(1, dt * 5));
 
-      if (transitionProgress < 1) {
-        transitionProgress = Math.min(1, transitionProgress + dt * 4.2);
-        const s = 0.92 + 0.08 * transitionProgress;
-        activeRig.root.scale.setScalar(s);
-      }
-
       yawRef.current += (targetYawRef.current - yawRef.current) * Math.min(1, dt * 10);
       pitchRef.current += (targetPitchRef.current - pitchRef.current) * Math.min(1, dt * 10);
       updateCameraTransform(camera.aspect);
 
       particles.rotation.y = elapsed * 0.04;
 
-      animateKnightRig(activeRig, {
+      animateCosmicOrbRig(orbRig, {
         elapsed,
+        dt,
+        mode: modeRef.current,
         state: stateRef.current,
         audioLevel: audioLevelRef.current || 0,
       });
@@ -349,16 +342,16 @@ export function CosmicKnightCanvas({
       disposed = true;
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
-      switchKnightFnRef.current = null;
       resizeObserver.disconnect();
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       canvas.removeEventListener('wheel', onWheel);
 
-      scene.remove(activeRig.root);
-      disposeObjectTree(activeRig.root);
+      scene.remove(orbRig.root);
+      disposeObjectTree(orbRig.root);
       groundGeo.dispose();
       groundMat.dispose();
       particleGeo.dispose();

@@ -716,7 +716,7 @@ export function useCosmicLive() {
     [addLog, stopMicrophone],
   );
 
-  // Poll output AnalyserNode smoothly while speaking so 3D Knight glow reacts to real audio
+  // Poll output AnalyserNode smoothly while speaking so 3D Cosmic Ball glow reacts to real audio
   useEffect(() => {
     const dataArray = new Uint8Array(64);
     const updateMeter = () => {
@@ -1432,8 +1432,8 @@ export function useCosmicLive() {
         'info',
         'gemini',
         next === 'badmash'
-          ? 'BADMASH MODE ON -> Switching to Purple Knight + Don Voice (Charon).'
-          : 'NORMAL MODE ON -> Switching to Blue Knight + Voice (Zephyr).',
+          ? 'BADMASH MODE ON -> Switching Cosmic Ball to Purple + Don Voice (Charon).'
+          : 'NORMAL MODE ON -> Switching Cosmic Ball to Blue + Voice (Zephyr).',
       );
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         clearAudioQueue('mode-switch');
