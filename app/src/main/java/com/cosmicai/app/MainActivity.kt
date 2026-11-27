@@ -266,8 +266,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         isActivityResumed = true
         UnityAdsManager.attachActivity(this)
-        while (pendingSnackbarMessages.isNotEmpty()) {
-            val msg = pendingSnackbarMessages.removeFirst()
+        while (true) {
+            val msg = pendingSnackbarMessages.removeFirstOrNull() ?: break
             Snackbar.make(rootContainer, msg, Snackbar.LENGTH_LONG).show()
         }
         pushUnityStateToWebView()

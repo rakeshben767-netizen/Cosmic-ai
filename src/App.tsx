@@ -194,9 +194,20 @@ export default function App() {
             data-testid="unity-ads-status-button"
             aria-label="Unity Ads Status"
             title="Unity Ads Status"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-white/15 bg-[#0d101b]/90 px-2.5 text-xs font-semibold text-slate-200 transition-colors hover:border-white/30 hover:text-white"
           >
-            <Tv className="h-4 w-4 text-purple-300" />
+            <Tv className="h-3.5 w-3.5 text-purple-300" />
+            <span>Ads</span>
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                unityAdsSnapshot?.rewardedState.phase === 'LOADED'
+                  ? 'bg-emerald-400'
+                  : unityAdsSnapshot?.sdkStatus.phase === 'FAILED' ||
+                      unityAdsSnapshot?.rewardedState.phase === 'FAILED'
+                    ? 'bg-red-400'
+                    : 'bg-amber-300'
+              }`}
+            />
           </button>
 
           <button

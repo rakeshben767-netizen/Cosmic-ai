@@ -319,7 +319,7 @@ object UnityAdsManager {
         val appCtx = context.applicationContext
         appContext = appCtx
 
-        if (UnityAds.isInitialized()) {
+        if (UnityAds.isInitialized) {
             _sdkStatus.value = SdkStatusState(phase = SdkInitPhase.INITIALIZED)
             if (_rewardedState.value.phase == PlacementLoadPhase.IDLE) {
                 loadRewarded()
@@ -345,7 +345,7 @@ object UnityAdsManager {
     }
 
     fun loadPlacement(placementId: String) {
-        if (!UnityAds.isInitialized()) {
+        if (!UnityAds.isInitialized) {
             appContext?.let { initialize(it) }
             return
         }

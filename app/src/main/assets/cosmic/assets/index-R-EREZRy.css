@@ -657,6 +657,10 @@
     width: var(--spacing);
   }
 
+  .w-1\.5 {
+    width: calc(var(--spacing) * 1.5);
+  }
+
   .w-2\.5 {
     width: calc(var(--spacing) * 2.5);
   }
@@ -910,6 +914,10 @@
 
   .rounded-2xl {
     border-radius: var(--radius-2xl);
+  }
+
+  .rounded-full {
+    border-radius: 2147483647px;
   }
 
   .rounded-lg {
@@ -1309,6 +1317,10 @@
     background-color: oklab(20.8419% .00112195 -.0304999 / .7);
   }
 
+  .bg-amber-300 {
+    background-color: var(--color-amber-300);
+  }
+
   .bg-amber-400 {
     background-color: var(--color-amber-400);
   }
@@ -1401,6 +1413,10 @@
     .bg-black\/80 {
       background-color: color-mix(in oklab, var(--color-black) 80%, transparent);
     }
+  }
+
+  .bg-emerald-400 {
+    background-color: var(--color-emerald-400);
   }
 
   .bg-emerald-500\/15 {
