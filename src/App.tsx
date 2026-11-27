@@ -22,6 +22,7 @@ import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
 import { UnityAdsModal } from './components/UnityAdsModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
+import { formatSessionDuration } from './utils/sessionDuration.ts';
 
 export default function App() {
   const {
@@ -48,6 +49,7 @@ export default function App() {
     powerOnAdNotice,
     lastAdRuleEvent,
     adElapsedActiveMs,
+    sessionDurationMs,
     bridgeRuntime,
     audioLevelRef,
     togglePower,
@@ -189,7 +191,29 @@ export default function App() {
           )}
         </div>
 
-        <div className="pointer-events-auto flex items-center gap-2">
+        <div className="pointer-events-auto flex items-center gap-2 sm:gap-3">
+          <div
+            data-testid="session-duration"
+            aria-label={`Session Duration ${formatSessionDuration(sessionDurationMs)}`}
+            title="Active voice session duration (auto-terminates at 40:00)"
+            className="flex flex-col items-end leading-tight sm:flex-row sm:items-center sm:gap-1.5"
+          >
+            <span className="text-[9px] tracking-wider text-slate-400/80 uppercase sm:text-[10px]">
+              Session Duration
+            </span>
+            <span
+              className={`font-mono text-[11px] tabular-nums sm:text-xs ${
+                isLive
+                  ? isBadmash
+                    ? 'text-purple-200/90'
+                    : 'text-sky-200/90'
+                  : 'text-slate-500'
+              }`}
+            >
+              {formatSessionDuration(sessionDurationMs)}
+            </span>
+          </div>
+
           <button
             type="button"
             onClick={() => setAdsModalOpen(true)}

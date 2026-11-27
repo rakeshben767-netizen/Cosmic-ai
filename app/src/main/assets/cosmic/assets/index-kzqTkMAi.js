@@ -47563,6 +47563,27 @@ async function probeVoiceBackendHealth(healthUrl, timeoutMs = 5500, fetchFn = fe
 		clearTimeout(timer);
 	}
 }
+function formatSessionDuration(durationMs) {
+	const totalSeconds = Math.floor((Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0) / 1e3);
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+function evaluateSessionElapsed(startedAtMs, nowMs) {
+	if (startedAtMs === null || !Number.isFinite(startedAtMs) || nowMs <= startedAtMs) return {
+		elapsedMs: 0,
+		shouldTerminate: false
+	};
+	const elapsedMs = nowMs - startedAtMs;
+	if (elapsedMs >= 24e5) return {
+		elapsedMs: 0,
+		shouldTerminate: true
+	};
+	return {
+		elapsedMs,
+		shouldTerminate: false
+	};
+}
 // src/hooks/useCosmicLive.ts
 var WORKLET_PROCESSOR_CODE = `
 class CosmicMicProcessor extends AudioWorkletProcessor {
@@ -47652,6 +47673,7 @@ function useCosmicLive() {
 	const [powerOnAdNotice, setPowerOnAdNotice] = (0, import_react.useState)(null);
 	const [lastAdRuleEvent, setLastAdRuleEvent] = (0, import_react.useState)(null);
 	const [adElapsedActiveMs, setAdElapsedActiveMs] = (0, import_react.useState)(0);
+	const [sessionDurationMs, setSessionDurationMs] = (0, import_react.useState)(0);
 	const [diagnostics, setDiagnostics] = (0, import_react.useState)(() => ({
 		contextState: "uninitialized",
 		sampleRate: 0,
@@ -47679,6 +47701,7 @@ function useCosmicLive() {
 	const recentSessionsRef = (0, import_react.useRef)(recentSessions);
 	const activeSessionIdRef = (0, import_react.useRef)(null);
 	const activeSessionStartedAtRef = (0, import_react.useRef)(Date.now());
+	const activeVoiceSessionStartedAtRef = (0, import_react.useRef)(null);
 	const audioLevelRef = (0, import_react.useRef)(0);
 	const audioCtxRef = (0, import_react.useRef)(null);
 	const badmashRoughnessShaperRef = (0, import_react.useRef)(null);
@@ -48097,6 +48120,8 @@ function useCosmicLive() {
 		if (!canRetry) {
 			userWantsLiveRef.current = false;
 			isSessionReadyRef.current = false;
+			activeVoiceSessionStartedAtRef.current = null;
+			setSessionDurationMs(0);
 			clearReconnectTimers();
 			stopMicrophone();
 			const reasonText = formatConnectionFailureReason({
@@ -48149,6 +48174,10 @@ function useCosmicLive() {
 			isSessionReadyRef.current = true;
 			retryCountRef.current = 0;
 			lastHealthErrorRef.current = null;
+			if (activeVoiceSessionStartedAtRef.current === null) {
+				activeVoiceSessionStartedAtRef.current = Date.now();
+				setSessionDurationMs(0);
+			}
 			if (handshakeTimerRef.current !== null) {
 				clearTimeout(handshakeTimerRef.current);
 				handshakeTimerRef.current = null;
@@ -48350,6 +48379,8 @@ function useCosmicLive() {
 		retryCountRef.current = 0;
 		resumeHandleRef.current = null;
 		activeSessionIdRef.current = null;
+		activeVoiceSessionStartedAtRef.current = null;
+		setSessionDurationMs(0);
 		clearReconnectTimers();
 		clearAudioQueue("user-disconnect");
 		stopMicrophone();
@@ -48944,6 +48975,31 @@ function useCosmicLive() {
 			delete win.__onCosmicUnityAdsRuleEvent;
 		};
 	}, [dispatchRewardedAdTrigger, handleAdResolution]);
+	(0, import_react.useEffect)(() => {
+		if (cosmicState === "IDLE" || cosmicState === "ERROR") {
+			activeVoiceSessionStartedAtRef.current = null;
+			setSessionDurationMs(0);
+			return;
+		}
+		const tickDuration = () => {
+			const { elapsedMs, shouldTerminate } = evaluateSessionElapsed(activeVoiceSessionStartedAtRef.current, Date.now());
+			if (shouldTerminate) {
+				addLog("info", "gemini", "Active voice session reached 40-minute limit; terminating connection and resetting session duration.");
+				disconnect();
+				return;
+			}
+			setSessionDurationMs(elapsedMs);
+		};
+		tickDuration();
+		const timerId = window.setInterval(tickDuration, 1e3);
+		return () => {
+			window.clearInterval(timerId);
+		};
+	}, [
+		addLog,
+		cosmicState,
+		disconnect
+	]);
 	const reloadRewardedAd = (0, import_react.useCallback)(async () => {
 		const bridge = getCosmicNativeBridge();
 		if (bridge?.reloadRewardedAd) await bridge.reloadRewardedAd();
@@ -48976,6 +49032,7 @@ function useCosmicLive() {
 		powerOnAdNotice,
 		lastAdRuleEvent,
 		adElapsedActiveMs,
+		sessionDurationMs,
 		bridgeRuntime: bridgeEnv.current,
 		audioLevelRef,
 		togglePower,
@@ -49004,7 +49061,7 @@ function useCosmicLive() {
 }
 // src/App.tsx
 function App() {
-	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingPowerOnUnlock, powerOnAdNotice, lastAdRuleEvent, adElapsedActiveMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, triggerRewardedAdManually, clearAdSnackbar, clearPowerOnAdNotice, clearError, clearMicNotice } = useCosmicLive();
+	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingPowerOnUnlock, powerOnAdNotice, lastAdRuleEvent, adElapsedActiveMs, sessionDurationMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, triggerRewardedAdManually, clearAdSnackbar, clearPowerOnAdNotice, clearError, clearMicNotice } = useCosmicLive();
 	const [resetViewSignal, setResetViewSignal] = (0, import_react.useState)(0);
 	const [privacyModalOpen, setPrivacyModalOpen] = (0, import_react.useState)(false);
 	const [adsModalOpen, setAdsModalOpen] = (0, import_react.useState)(false);
@@ -49099,8 +49156,21 @@ function App() {
 						]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "pointer-events-auto flex items-center gap-2",
+						className: "pointer-events-auto flex items-center gap-2 sm:gap-3",
 						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								"data-testid": "session-duration",
+								"aria-label": `Session Duration ${formatSessionDuration(sessionDurationMs)}`,
+								title: "Active voice session duration (auto-terminates at 40:00)",
+								className: "flex flex-col items-end leading-tight sm:flex-row sm:items-center sm:gap-1.5",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "text-[9px] tracking-wider text-slate-400/80 uppercase sm:text-[10px]",
+									children: "Session Duration"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: `font-mono text-[11px] tabular-nums sm:text-xs ${isLive ? isBadmash ? "text-purple-200/90" : "text-sky-200/90" : "text-slate-500"}`,
+									children: formatSessionDuration(sessionDurationMs)
+								})]
+							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
 								onClick: () => setAdsModalOpen(true),

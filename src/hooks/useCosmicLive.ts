@@ -55,6 +55,7 @@ import {
   probeVoiceBackendHealth,
   shouldAutoReconnect,
 } from '../utils/connectionManager.ts';
+import { evaluateSessionElapsed } from '../utils/sessionDuration.ts';
 
 const WORKLET_PROCESSOR_CODE = `
 class CosmicMicProcessor extends AudioWorkletProcessor {
@@ -226,6 +227,7 @@ export function useCosmicLive() {
   const [powerOnAdNotice, setPowerOnAdNotice] = useState<string | null>(null);
   const [lastAdRuleEvent, setLastAdRuleEvent] = useState<RewardedAdRuleEvent | null>(null);
   const [adElapsedActiveMs, setAdElapsedActiveMs] = useState<number>(0);
+  const [sessionDurationMs, setSessionDurationMs] = useState<number>(0);
   const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
     contextState: 'uninitialized',
     sampleRate: 0,
@@ -255,6 +257,7 @@ export function useCosmicLive() {
   const recentSessionsRef = useRef<ConversationSessionRecord[]>(recentSessions);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeSessionStartedAtRef = useRef<number>(Date.now());
+  const activeVoiceSessionStartedAtRef = useRef<number | null>(null);
   const audioLevelRef = useRef<number>(0);
 
   // Persistent single AudioContext + Badmash Husky/Bass EQ -> Compressor -> GainNode -> Analyser -> destination
@@ -821,6 +824,8 @@ export function useCosmicLive() {
       if (!canRetry) {
         userWantsLiveRef.current = false;
         isSessionReadyRef.current = false;
+        activeVoiceSessionStartedAtRef.current = null;
+        setSessionDurationMs(0);
         clearReconnectTimers();
         stopMicrophone();
         const reasonText = formatConnectionFailureReason({
@@ -888,6 +893,10 @@ export function useCosmicLive() {
         isSessionReadyRef.current = true;
         retryCountRef.current = 0;
         lastHealthErrorRef.current = null;
+        if (activeVoiceSessionStartedAtRef.current === null) {
+          activeVoiceSessionStartedAtRef.current = Date.now();
+          setSessionDurationMs(0);
+        }
         if (handshakeTimerRef.current !== null) {
           clearTimeout(handshakeTimerRef.current);
           handshakeTimerRef.current = null;
@@ -1179,6 +1188,8 @@ export function useCosmicLive() {
     retryCountRef.current = 0;
     resumeHandleRef.current = null;
     activeSessionIdRef.current = null;
+    activeVoiceSessionStartedAtRef.current = null;
+    setSessionDurationMs(0);
     clearReconnectTimers();
     clearAudioQueue('user-disconnect');
     stopMicrophone();
@@ -2031,6 +2042,38 @@ export function useCosmicLive() {
     };
   }, [dispatchRewardedAdTrigger, handleAdResolution]);
 
+  // Track active voice session duration and auto-terminate cleanly at 40 minutes
+  useEffect(() => {
+    if (cosmicState === 'IDLE' || cosmicState === 'ERROR') {
+      activeVoiceSessionStartedAtRef.current = null;
+      setSessionDurationMs(0);
+      return;
+    }
+
+    const tickDuration = () => {
+      const { elapsedMs, shouldTerminate } = evaluateSessionElapsed(
+        activeVoiceSessionStartedAtRef.current,
+        Date.now(),
+      );
+      if (shouldTerminate) {
+        addLog(
+          'info',
+          'gemini',
+          'Active voice session reached 40-minute limit; terminating connection and resetting session duration.',
+        );
+        disconnect();
+        return;
+      }
+      setSessionDurationMs(elapsedMs);
+    };
+
+    tickDuration();
+    const timerId = window.setInterval(tickDuration, 1000);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [addLog, cosmicState, disconnect]);
+
   const reloadRewardedAd = useCallback(async () => {
     const bridge = getCosmicNativeBridge();
     if (bridge?.reloadRewardedAd) {
@@ -2066,6 +2109,7 @@ export function useCosmicLive() {
     powerOnAdNotice,
     lastAdRuleEvent,
     adElapsedActiveMs,
+    sessionDurationMs,
     bridgeRuntime: bridgeEnv.current,
     audioLevelRef,
     togglePower,
