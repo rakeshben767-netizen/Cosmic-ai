@@ -22,7 +22,9 @@ import type {
   DiagnosticLogEntry,
   LiveKnowledgeSearchResult,
   RapBattleStyle,
+  RewardedAdRuleEvent,
   TranscriptEntry,
+  UnityAdsSnapshot,
 } from '../types/cosmic.ts';
 import {
   clampSpeechRate,
@@ -41,6 +43,9 @@ interface SettingsFeaturesModalProps {
   diagnostics: AudioDiagnosticsSnapshot;
   speakerTestResult: string | null;
   liveKnowledge: LiveKnowledgeSearchResult | null;
+  unityAdsSnapshot: UnityAdsSnapshot | null;
+  lastAdRuleEvent: RewardedAdRuleEvent | null;
+  adElapsedActiveMs: number;
   bridgeRuntime: { hasNativeBridge: boolean; runtimeLabel: string };
   backendUrl: string;
   transcripts: TranscriptEntry[];
@@ -53,6 +58,7 @@ interface SettingsFeaturesModalProps {
   onRunSafeAction: (name: string, args: Record<string, unknown>) => void;
   onUpdateBackendUrl: (url: string) => boolean;
   onClearRecentSessions?: () => void;
+  onReloadRewardedAd?: () => void;
 }
 
 const OPTIONAL_FEATURE_ITEMS: Array<{
@@ -136,6 +142,9 @@ export function SettingsFeaturesModal({
   diagnostics,
   speakerTestResult,
   liveKnowledge,
+  unityAdsSnapshot,
+  lastAdRuleEvent,
+  adElapsedActiveMs,
   bridgeRuntime,
   backendUrl,
   transcripts,
@@ -148,6 +157,7 @@ export function SettingsFeaturesModal({
   onRunSafeAction,
   onUpdateBackendUrl,
   onClearRecentSessions,
+  onReloadRewardedAd,
 }: SettingsFeaturesModalProps) {
   const [section, setSection] = useState<'features' | 'knowledge' | 'diagnostics'>('features');
   const [searchQuery, setSearchQuery] = useState('');
@@ -174,6 +184,9 @@ export function SettingsFeaturesModal({
           mode={mode}
           diagnostics={diagnostics}
           speakerTestResult={speakerTestResult}
+          unityAdsSnapshot={unityAdsSnapshot}
+          lastAdRuleEvent={lastAdRuleEvent}
+          adElapsedActiveMs={adElapsedActiveMs}
           bridgeRuntime={bridgeRuntime}
           backendUrl={backendUrl}
           transcripts={transcripts}
@@ -184,6 +197,7 @@ export function SettingsFeaturesModal({
           onRunSafeAction={onRunSafeAction}
           onUpdateBackendUrl={onUpdateBackendUrl}
           onClearRecentSessions={onClearRecentSessions}
+          onReloadRewardedAd={onReloadRewardedAd}
         />
       </div>
     );

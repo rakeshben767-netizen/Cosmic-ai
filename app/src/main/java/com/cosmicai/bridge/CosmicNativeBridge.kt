@@ -9,6 +9,7 @@ import android.provider.ContactsContract
 import android.provider.Settings
 import android.webkit.JavascriptInterface
 import androidx.core.content.ContextCompat
+import com.cosmicai.ads.UnityAdsManager
 import com.cosmicai.app.MainActivity
 import org.json.JSONArray
 import org.json.JSONObject
@@ -355,5 +356,30 @@ class CosmicNativeBridge(private val context: Context) {
                 matches.take(5)
             )
         }
+    }
+
+    @JavascriptInterface
+    fun getUnityAdsState(): String {
+        return UnityAdsManager.getSnapshotJson().toString()
+    }
+
+    @JavascriptInterface
+    fun triggerRewardedAd(trigger: String?): String {
+        val cleanTrigger = when (trigger?.trim()) {
+            "app_load", "interval_5m", "mode_switch_badmash" -> trigger.trim()
+            else -> "interval_5m"
+        }
+        UnityAdsManager.requestOrShowRewarded(cleanTrigger)
+        return jsonResult(
+            ok = true,
+            message = "Rewarded ad trigger '$cleanTrigger' dispatched.",
+            extra = mapOf("trigger" to cleanTrigger)
+        )
+    }
+
+    @JavascriptInterface
+    fun reloadRewardedAd(): String {
+        UnityAdsManager.loadRewarded()
+        return jsonResult(true, "Rewarded ad reload requested.")
     }
 }

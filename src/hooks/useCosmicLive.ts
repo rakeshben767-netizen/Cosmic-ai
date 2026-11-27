@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_COSMIC_FEATURES,
   type ActionLogEntry,
+  type AdResolutionOutcome,
+  type AdTriggerType,
   type AudioDiagnosticsSnapshot,
   type ConversationSessionRecord,
   type CosmicFeaturesConfig,
@@ -10,11 +12,21 @@ import {
   type DiagnosticLogEntry,
   type LiveKnowledgeSearchResult,
   type PendingWhatsAppDraft,
+  type RewardedAdRuleEvent,
   type SafeActionName,
   type ToolCallPayload,
   type ToolResponsePayload,
   type TranscriptEntry,
+  type UnityAdsSnapshot,
 } from '../types/cosmic.ts';
+import {
+  advanceActiveTime,
+  createInitialAdTriggerState,
+  evaluateAppLoadTrigger,
+  evaluateModeSwitchRequest,
+  resolveRewardedAdOutcome,
+  type AdTriggerState,
+} from '../utils/adTriggerEngine.ts';
 import {
   buildMemoryContextEntries,
   clearRecentSessionsStorage,
@@ -208,6 +220,11 @@ export function useCosmicLive() {
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
   const [speakerTestResult, setSpeakerTestResult] = useState<string | null>(null);
   const [liveKnowledge, setLiveKnowledge] = useState<LiveKnowledgeSearchResult | null>(null);
+  const [unityAdsSnapshot, setUnityAdsSnapshot] = useState<UnityAdsSnapshot | null>(null);
+  const [adSnackbarMessage, setAdSnackbarMessage] = useState<string | null>(null);
+  const [pendingBadmashUnlock, setPendingBadmashUnlock] = useState<boolean>(false);
+  const [lastAdRuleEvent, setLastAdRuleEvent] = useState<RewardedAdRuleEvent | null>(null);
+  const [adElapsedActiveMs, setAdElapsedActiveMs] = useState<number>(0);
   const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
     contextState: 'uninitialized',
     sampleRate: 0,
@@ -271,6 +288,9 @@ export function useCosmicLive() {
 
   const meterTimerRef = useRef<number | null>(null);
   const bridgeEnv = useRef(detectBridgeEnvironment());
+  const adTriggerStateRef = useRef<AdTriggerState>(createInitialAdTriggerState());
+  const adWatchdogTimerRef = useRef<number | null>(null);
+  const snackbarTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -1504,10 +1524,68 @@ export function useCosmicLive() {
     [addLog, clearAudioQueue],
   );
 
+  const handleAdResolution = useCallback(
+    (trigger: AdTriggerType, outcome: AdResolutionOutcome) => {
+      if (adWatchdogTimerRef.current !== null) {
+        clearTimeout(adWatchdogTimerRef.current);
+        adWatchdogTimerRef.current = null;
+      }
+      const { state: nextState, event } = resolveRewardedAdOutcome(
+        adTriggerStateRef.current,
+        trigger,
+        outcome,
+      );
+      adTriggerStateRef.current = nextState;
+      setPendingBadmashUnlock(false);
+      setAdElapsedActiveMs(0);
+      setLastAdRuleEvent(event);
+
+      addLog('info', 'bridge', `Rewarded Ad rule event: ${JSON.stringify(event)}`);
+
+      if (event.grant_badmash_mode) {
+        setModeDirect('badmash');
+      }
+    },
+    [addLog, setModeDirect],
+  );
+
+  const dispatchRewardedAdTrigger = useCallback(
+    (trigger: AdTriggerType) => {
+      const bridge = getCosmicNativeBridge();
+      if (bridge?.triggerRewardedAd) {
+        if (adWatchdogTimerRef.current !== null) {
+          clearTimeout(adWatchdogTimerRef.current);
+        }
+        // Safety fallback for mode_switch_badmash so the UI never gets stuck if native callback is delayed
+        if (trigger === 'mode_switch_badmash') {
+          adWatchdogTimerRef.current = window.setTimeout(() => {
+            if (adTriggerStateRef.current.pendingBadmashUnlock) {
+              handleAdResolution(trigger, 'fallback_no_fill_or_error');
+            }
+          }, 15000);
+        }
+        void bridge.triggerRewardedAd(trigger);
+      } else {
+        handleAdResolution(trigger, 'fallback_no_fill_or_error');
+      }
+    },
+    [handleAdResolution],
+  );
+
   const toggleBadmashMode = useCallback(() => {
-    const next: CosmicMode = modeRef.current === 'normal' ? 'badmash' : 'normal';
-    setModeDirect(next);
-  }, [setModeDirect]);
+    const evaluation = evaluateModeSwitchRequest(adTriggerStateRef.current, modeRef.current);
+    adTriggerStateRef.current = evaluation.state;
+
+    if (evaluation.action === 'switch_to_normal_immediately') {
+      setModeDirect('normal');
+      return;
+    }
+
+    if (evaluation.action === 'trigger_rewarded_ad' && evaluation.trigger) {
+      setPendingBadmashUnlock(true);
+      dispatchRewardedAdTrigger(evaluation.trigger);
+    }
+  }, [dispatchRewardedAdTrigger, setModeDirect]);
 
   const updateFeatures = useCallback(
     (patch: Partial<CosmicFeaturesConfig>) => {
@@ -1837,6 +1915,101 @@ export function useCosmicLive() {
     setAdminToken(null);
   }, []);
 
+  // Subscribe to native Unity Ads StateFlow/SharedFlow updates & evaluate Rewarded-only ad rules
+  useEffect(() => {
+    const win = window as unknown as {
+      __onCosmicUnityAdsState?: (snapshot: UnityAdsSnapshot) => void;
+      __onCosmicUnityAdsMessage?: (message: string) => void;
+      __onCosmicUnityAdsRuleEvent?: (event: {
+        trigger?: AdTriggerType;
+        outcome?: AdResolutionOutcome;
+        grant_badmash_mode?: boolean;
+      }) => void;
+    };
+
+    win.__onCosmicUnityAdsState = (snapshot) => {
+      setUnityAdsSnapshot(snapshot);
+    };
+
+    win.__onCosmicUnityAdsMessage = (message) => {
+      setAdSnackbarMessage(message);
+      if (snackbarTimerRef.current !== null) {
+        clearTimeout(snackbarTimerRef.current);
+      }
+      snackbarTimerRef.current = window.setTimeout(() => {
+        setAdSnackbarMessage(null);
+      }, 4500);
+    };
+
+    win.__onCosmicUnityAdsRuleEvent = (raw) => {
+      const trigger: AdTriggerType =
+        raw.trigger === 'app_load' ||
+        raw.trigger === 'interval_5m' ||
+        raw.trigger === 'mode_switch_badmash'
+          ? raw.trigger
+          : 'interval_5m';
+      const outcome: AdResolutionOutcome =
+        raw.outcome === 'completed' ||
+        raw.outcome === 'skipped' ||
+        raw.outcome === 'fallback_no_fill_or_error' ||
+        raw.outcome === 'not_ready'
+          ? raw.outcome
+          : raw.grant_badmash_mode
+            ? 'completed'
+            : 'skipped';
+      handleAdResolution(trigger, outcome);
+    };
+
+    const bridge = getCosmicNativeBridge();
+    if (bridge?.getUnityAdsState) {
+      void bridge.getUnityAdsState().then((snapshot) => {
+        if (snapshot) setUnityAdsSnapshot(snapshot);
+      });
+    }
+
+    // Rule 1: App Open / Post-Load Trigger
+    const appLoadEval = evaluateAppLoadTrigger(adTriggerStateRef.current);
+    adTriggerStateRef.current = appLoadEval.state;
+    if (appLoadEval.shouldTriggerAd && appLoadEval.trigger) {
+      dispatchRewardedAdTrigger(appLoadEval.trigger);
+    }
+
+    // Rule 2: 5-Minute Active Interval Trigger (Both Normal & Badmash Modes)
+    const intervalId = window.setInterval(() => {
+      const isVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+      const step = advanceActiveTime(adTriggerStateRef.current, 1000, isVisible);
+      adTriggerStateRef.current = step.state;
+      setAdElapsedActiveMs(step.state.elapsedActiveMs);
+      if (step.shouldTriggerAd && step.trigger) {
+        dispatchRewardedAdTrigger(step.trigger);
+      }
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+      if (adWatchdogTimerRef.current !== null) {
+        clearTimeout(adWatchdogTimerRef.current);
+      }
+      if (snackbarTimerRef.current !== null) {
+        clearTimeout(snackbarTimerRef.current);
+      }
+      delete win.__onCosmicUnityAdsState;
+      delete win.__onCosmicUnityAdsMessage;
+      delete win.__onCosmicUnityAdsRuleEvent;
+    };
+  }, [dispatchRewardedAdTrigger, handleAdResolution]);
+
+  const reloadRewardedAd = useCallback(async () => {
+    const bridge = getCosmicNativeBridge();
+    if (bridge?.reloadRewardedAd) {
+      await bridge.reloadRewardedAd();
+    }
+    if (bridge?.getUnityAdsState) {
+      const snapshot = await bridge.getUnityAdsState();
+      if (snapshot) setUnityAdsSnapshot(snapshot);
+    }
+  }, []);
+
   return {
     mode,
     cosmicState,
@@ -1855,6 +2028,11 @@ export function useCosmicLive() {
     diagnostics,
     speakerTestResult,
     liveKnowledge,
+    unityAdsSnapshot,
+    adSnackbarMessage,
+    pendingBadmashUnlock,
+    lastAdRuleEvent,
+    adElapsedActiveMs,
     bridgeRuntime: bridgeEnv.current,
     audioLevelRef,
     togglePower,
@@ -1873,6 +2051,8 @@ export function useCosmicLive() {
     runManualSafeAction,
     updateBackendUrl,
     clearRecentSessions,
+    reloadRewardedAd,
+    clearAdSnackbar: () => setAdSnackbarMessage(null),
     clearError: () => setErrorMessage(null),
     clearMicNotice: () => setMicNotice(null),
   };

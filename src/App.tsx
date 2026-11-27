@@ -40,6 +40,11 @@ export default function App() {
     diagnostics,
     speakerTestResult,
     liveKnowledge,
+    unityAdsSnapshot,
+    adSnackbarMessage,
+    pendingBadmashUnlock,
+    lastAdRuleEvent,
+    adElapsedActiveMs,
     bridgeRuntime,
     audioLevelRef,
     togglePower,
@@ -58,6 +63,8 @@ export default function App() {
     runManualSafeAction,
     updateBackendUrl,
     clearRecentSessions,
+    reloadRewardedAd,
+    clearAdSnackbar,
     clearError,
     clearMicNotice,
   } = useCosmicLive();
@@ -209,6 +216,23 @@ export default function App() {
             className="pointer-events-auto w-full rounded-xl border border-amber-400/45 bg-[#1b1409]/95 px-3 py-2 text-xs text-amber-100 shadow-lg"
           >
             Reconnecting voice session automatically (attempt {diagnostics.retryCount}/5)...
+          </div>
+        )}
+
+        {adSnackbarMessage && (
+          <div
+            role="status"
+            data-testid="rewarded-ad-snackbar"
+            className="pointer-events-auto flex w-full items-center justify-between gap-2 rounded-xl border border-emerald-400/45 bg-[#0c1a15]/95 px-3 py-2 text-xs text-emerald-100 shadow-lg"
+          >
+            <span className="min-w-0 break-words font-medium">{adSnackbarMessage}</span>
+            <button
+              type="button"
+              onClick={clearAdSnackbar}
+              className="shrink-0 font-semibold text-emerald-300 hover:text-white"
+            >
+              OK
+            </button>
           </div>
         )}
 
@@ -425,9 +449,10 @@ export default function App() {
             role="switch"
             aria-checked={isBadmash}
             aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
+            disabled={pendingBadmashUnlock}
             onClick={toggleBadmashMode}
             data-testid="badmash-mode-toggle"
-            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold tracking-wide whitespace-nowrap transition-all ${
+            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold tracking-wide whitespace-nowrap transition-all disabled:opacity-70 ${
               isBadmash
                 ? 'border-purple-500/80 bg-purple-700/30 text-purple-100 shadow-[0_0_18px_rgba(168,85,247,0.45)]'
                 : 'border-sky-400/45 bg-sky-950/60 text-sky-100 hover:border-sky-300'
@@ -437,6 +462,11 @@ export default function App() {
               <>
                 <Flame className="h-3.5 w-3.5 text-purple-300" />
                 <span>BADMASH MODE</span>
+              </>
+            ) : pendingBadmashUnlock ? (
+              <>
+                <Sparkles className="h-3.5 w-3.5 animate-pulse text-purple-300" />
+                <span>UNLOCKING...</span>
               </>
             ) : (
               <>
@@ -471,6 +501,9 @@ export default function App() {
           diagnostics={diagnostics}
           speakerTestResult={speakerTestResult}
           liveKnowledge={liveKnowledge}
+          unityAdsSnapshot={unityAdsSnapshot}
+          lastAdRuleEvent={lastAdRuleEvent}
+          adElapsedActiveMs={adElapsedActiveMs}
           bridgeRuntime={bridgeRuntime}
           backendUrl={backendUrl}
           transcripts={transcripts}
@@ -483,6 +516,7 @@ export default function App() {
           onRunSafeAction={runManualSafeAction}
           onUpdateBackendUrl={updateBackendUrl}
           onClearRecentSessions={clearRecentSessions}
+          onReloadRewardedAd={reloadRewardedAd}
         />
       )}
     </div>

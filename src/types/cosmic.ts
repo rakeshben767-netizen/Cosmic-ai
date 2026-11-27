@@ -178,3 +178,46 @@ export interface AudioDiagnosticsSnapshot {
   lastCloseReason: string | null;
   backendLatencyMs: number | null;
 }
+
+export type AdTriggerType = 'app_load' | 'interval_5m' | 'mode_switch_badmash';
+
+export type AdResolutionOutcome =
+  | 'completed'
+  | 'skipped'
+  | 'fallback_no_fill_or_error'
+  | 'not_ready';
+
+export interface RewardedAdRuleEvent {
+  ad_type: 'rewarded';
+  trigger: AdTriggerType;
+  grant_badmash_mode: boolean;
+  next_interval_sec: 300;
+}
+
+export interface UnityPlacementSnapshot {
+  placementId: string;
+  phase: 'IDLE' | 'LOADING' | 'LOADED' | 'SHOWING' | 'FAILED';
+  rawErrorCode: string | null;
+  rawErrorMessage: string | null;
+}
+
+export interface UnityAdsSnapshot {
+  appName: string;
+  unityGameId: string;
+  testMode: boolean;
+  sdkStatus: {
+    phase: 'UNINITIALIZED' | 'INITIALIZING' | 'INITIALIZED' | 'FAILED';
+    rawErrorCode: string | null;
+    rawErrorMessage: string | null;
+  };
+  rewardedState: UnityPlacementSnapshot;
+  interstitialState: UnityPlacementSnapshot;
+  counters: {
+    loadSuccess: number;
+    loadFailed: number;
+    impressions: number;
+    clicks: number;
+    skips: number;
+  };
+  lastRuleEvent: (RewardedAdRuleEvent & { outcome?: string }) | null;
+}

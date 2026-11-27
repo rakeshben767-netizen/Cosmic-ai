@@ -23,12 +23,21 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.webkit.WebViewAssetLoader
+import com.cosmicai.ads.UnityAdsManager
 import com.cosmicai.bridge.CosmicNativeBridge
+import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var rootContainer: FrameLayout
     private var pendingWebPermissionRequest: PermissionRequest? = null
 
     private val requestPermissionsLauncher =
@@ -100,7 +109,7 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        val rootContainer = FrameLayout(this).apply {
+        rootContainer = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#0c1220"))
             addView(
                 webView,
@@ -119,7 +128,15 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(rootContainer)
 
+        UnityAdsManager.attachActivity(this)
+        UnityAdsManager.initialize(applicationContext)
+        observeUnityAds()
+
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                pushUnityStateToWebView()
+            }
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -196,7 +213,62 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun observeUnityAds() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    UnityAdsManager.userMessages.collect { message ->
+                        Snackbar.make(rootContainer, message, Snackbar.LENGTH_LONG).show()
+                        val quoted = JSONObject.quote(message)
+                        webView.evaluateJavascript(
+                            "window.__onCosmicUnityAdsMessage && window.__onCosmicUnityAdsMessage($quoted);",
+                            null
+                        )
+                    }
+                }
+                launch {
+                    UnityAdsManager.ruleEvents.collect { event ->
+                        val payload = event.toJson().toString()
+                        webView.evaluateJavascript(
+                            "window.__onCosmicUnityAdsRuleEvent && window.__onCosmicUnityAdsRuleEvent($payload);",
+                            null
+                        )
+                    }
+                }
+                launch {
+                    combine(
+                        UnityAdsManager.sdkStatus,
+                        UnityAdsManager.rewardedState,
+                        UnityAdsManager.interstitialState,
+                        UnityAdsManager.counters
+                    ) { _, _, _, _ ->
+                        UnityAdsManager.getSnapshotJson().toString()
+                    }.collect { snapshotJson ->
+                        webView.evaluateJavascript(
+                            "window.__onCosmicUnityAdsState && window.__onCosmicUnityAdsState($snapshotJson);",
+                            null
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun pushUnityStateToWebView() {
+        val snapshotJson = UnityAdsManager.getSnapshotJson().toString()
+        webView.evaluateJavascript(
+            "window.__onCosmicUnityAdsState && window.__onCosmicUnityAdsState($snapshotJson);",
+            null
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        UnityAdsManager.attachActivity(this)
+    }
+
     override fun onDestroy() {
+        UnityAdsManager.detachActivity(this)
         webView.destroy()
         super.onDestroy()
     }

@@ -1,4 +1,9 @@
-import type { ContactLookupMatch, WhatsAppMessageState } from '../types/cosmic.ts';
+import type {
+  AdTriggerType,
+  ContactLookupMatch,
+  UnityAdsSnapshot,
+  WhatsAppMessageState,
+} from '../types/cosmic.ts';
 
 export interface NativeActionResponse {
   ok: boolean;
@@ -8,6 +13,7 @@ export interface NativeActionResponse {
   state?: WhatsAppMessageState;
   url?: string;
   target?: string;
+  trigger?: AdTriggerType;
 }
 
 export interface CosmicNativeBridge {
@@ -19,6 +25,9 @@ export interface CosmicNativeBridge {
   callContact(contactName: string): Promise<NativeActionResponse>;
   findContact(contactName: string): Promise<NativeActionResponse>;
   openWhatsAppChat(phoneNumber: string, message: string): Promise<NativeActionResponse>;
+  getUnityAdsState?: () => Promise<UnityAdsSnapshot | null>;
+  triggerRewardedAd?: (trigger: AdTriggerType) => Promise<NativeActionResponse>;
+  reloadRewardedAd?: () => Promise<NativeActionResponse>;
 }
 
 interface RawAndroidWebViewBridge {
@@ -30,6 +39,9 @@ interface RawAndroidWebViewBridge {
   callContact?: (contactName: string) => string;
   findContact?: (contactName: string) => string;
   openWhatsAppChat?: (phoneNumber: string, message: string) => string;
+  getUnityAdsState?: () => string;
+  triggerRewardedAd?: (trigger: string) => string;
+  reloadRewardedAd?: () => string;
 }
 
 interface RawCapacitorWindow {
@@ -127,6 +139,28 @@ export function getCosmicNativeBridge(): CosmicNativeBridge | null {
           'openWhatsAppChat',
         );
       },
+      getUnityAdsState: webViewBridge.getUnityAdsState
+        ? async () => {
+            try {
+              return JSON.parse(webViewBridge.getUnityAdsState!()) as UnityAdsSnapshot;
+            } catch {
+              return null;
+            }
+          }
+        : undefined,
+      triggerRewardedAd: webViewBridge.triggerRewardedAd
+        ? async (trigger: AdTriggerType) => {
+            return safeParseBridgeJson(
+              webViewBridge.triggerRewardedAd!(trigger),
+              'triggerRewardedAd',
+            );
+          }
+        : undefined,
+      reloadRewardedAd: webViewBridge.reloadRewardedAd
+        ? async () => {
+            return safeParseBridgeJson(webViewBridge.reloadRewardedAd!(), 'reloadRewardedAd');
+          }
+        : undefined,
     };
   }
 
