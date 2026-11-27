@@ -88,6 +88,8 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     assert.match(normalPrompt, /SWEET, SIMPLE HINDI GIRL AI/i);
     assert.match(normalPrompt, /female \(girl\) AI assistant/i);
     assert.match(normalPrompt, /ZERO TAPORI WORDS/i);
+    assert.match(normalPrompt, /ACCURATE LISTENING, PHONETIC RECOVERY & FAST LOGICAL ANSWERS/i);
+    assert.match(buildCosmicSystemInstruction('badmash'), /ACCURATE LISTENING, PHONETIC RECOVERY & FAST LOGICAL ANSWERS/i);
     assert.doesNotMatch(normalPrompt, /MUMBAI TAPORI & MARATHI SEMANTIC KNOWLEDGE BASE/i);
     assert.doesNotMatch(normalPrompt, /ROAST BATTLE ENGINE \(ENABLED\)/i);
     assert.doesNotMatch(normalPrompt, /BRUTAL MUMBAI TAPORI DON/i);

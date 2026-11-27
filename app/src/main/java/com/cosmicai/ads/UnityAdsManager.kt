@@ -235,7 +235,7 @@ object UnityAdsManager {
                     rawErrorMessage = message
                 )
                 if (trigger == "power_on") {
-                    _userMessages.tryEmit("Ad failed to show (${error.name}: $message). Power On cancelled.")
+                    _userMessages.tryEmit("Please try again.")
                 }
                 emitRuleEvent(
                     AdRuleEvent(
@@ -295,7 +295,7 @@ object UnityAdsManager {
                     UnityAds.UnityAdsShowCompletionState.SKIPPED -> {
                         _counters.update { it.copy(skips = it.skips + 1) }
                         if (trigger == "power_on") {
-                            _userMessages.tryEmit("Ad skipped. Watch the full ad to Power On Cosmic AI.")
+                            _userMessages.tryEmit("Please try again.")
                         }
                         emitRuleEvent(
                             AdRuleEvent(
@@ -516,8 +516,7 @@ object UnityAdsManager {
         pendingTimeoutJob?.cancel()
         pendingTimeoutJob = null
         if (pending == "power_on") {
-            val detail = rawReason?.let { " ($it)" } ?: ""
-            _userMessages.tryEmit("Rewarded Ad not loaded$detail. Power On blocked until an ad loads.")
+            _userMessages.tryEmit("Please try again.")
         }
         emitRuleEvent(
             AdRuleEvent(
@@ -537,7 +536,7 @@ object UnityAdsManager {
             if (pendingTrigger == expectedTrigger && activeShowTrigger == null) {
                 pendingTrigger = null
                 if (expectedTrigger == "power_on") {
-                    _userMessages.tryEmit("Rewarded Ad is still loading. Please retry Power On in a moment.")
+                    _userMessages.tryEmit("Please try again.")
                 }
                 emitRuleEvent(
                     AdRuleEvent(

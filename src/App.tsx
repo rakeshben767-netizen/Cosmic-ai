@@ -22,6 +22,7 @@ import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
 import { UnityAdsModal } from './components/UnityAdsModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
+import { classifyLatency } from './utils/latency.ts';
 import { formatSessionDuration } from './utils/sessionDuration.ts';
 
 export default function App() {
@@ -132,6 +133,10 @@ export default function App() {
   };
 
   const latestTranscript = transcripts[transcripts.length - 1] || null;
+  const latestCosmicTranscript =
+    [...transcripts].reverse().find((entry) => entry.speaker === 'cosmic') || null;
+  const captionEntry = latestCosmicTranscript || latestTranscript;
+  const latencyStatus = classifyLatency(diagnostics.backendLatencyMs, isLive);
   const showTextFallback = isLive && (isMicMuted || !diagnostics.micActive || Boolean(micNotice));
 
   const stateColorClass =
@@ -192,6 +197,16 @@ export default function App() {
         </div>
 
         <div className="pointer-events-auto flex items-center gap-2 sm:gap-3">
+          <div
+            data-testid="latency-indicator"
+            aria-label={`Network Latency ${latencyStatus.label}`}
+            title="Real-time WebSocket ping latency"
+            className="flex items-center gap-1.5 font-mono text-[10px] tabular-nums sm:text-xs"
+          >
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${latencyStatus.dotClass}`} />
+            <span className={latencyStatus.textClass}>{latencyStatus.label}</span>
+          </div>
+
           <div
             data-testid="session-duration"
             aria-label={`Session Duration ${formatSessionDuration(sessionDurationMs)}`}
@@ -259,8 +274,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Compact Floating Overlays Just Above Bottom Dock */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-24 z-20 mx-auto flex w-[min(92vw,540px)] flex-col items-center gap-2 sm:bottom-24">
+      {/* Compact Floating Overlays Just Above Bottom Dock (cleared above wrapped mobile dock) */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-32 z-20 mx-auto flex w-[min(92vw,540px)] flex-col items-center gap-2 sm:bottom-24">
         {cosmicState === 'RECONNECTING' && (
           <div
             role="status"
@@ -292,25 +307,16 @@ export default function App() {
           <div
             role="alert"
             data-testid="power-on-ad-notice"
-            className="pointer-events-auto flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/45 bg-[#1b1409]/95 px-3 py-2 text-xs text-amber-100 shadow-lg"
+            className="pointer-events-auto flex w-auto max-w-full items-center justify-between gap-3 rounded-xl border border-amber-400/45 bg-[#1b1409]/95 px-3.5 py-2 text-xs text-amber-100 shadow-lg"
           >
-            <span className="min-w-[160px] flex-1 break-words">{powerOnAdNotice}</span>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setAdsModalOpen(true)}
-                className="rounded-md border border-purple-400/50 bg-purple-500/20 px-2.5 py-1 font-semibold text-purple-100 hover:bg-purple-500/30"
-              >
-                Ads Status
-              </button>
-              <button
-                type="button"
-                onClick={clearPowerOnAdNotice}
-                className="font-semibold text-amber-300 hover:text-white"
-              >
-                OK
-              </button>
-            </div>
+            <span className="font-medium">{powerOnAdNotice}</span>
+            <button
+              type="button"
+              onClick={clearPowerOnAdNotice}
+              className="shrink-0 font-semibold text-amber-300 hover:text-white"
+            >
+              OK
+            </button>
           </div>
         )}
 
@@ -459,15 +465,27 @@ export default function App() {
           </form>
         )}
 
-        {latestTranscript && (
+        {captionEntry && (
           <div
             data-testid="latest-transcript-pill"
-            className="pointer-events-auto max-w-md truncate rounded-xl border border-white/10 bg-[#0d111d]/92 px-3.5 py-1.5 text-xs text-slate-200 shadow-lg"
+            className={`pointer-events-auto max-h-28 w-full max-w-md overflow-y-auto rounded-xl border px-3.5 py-2 text-xs leading-relaxed shadow-xl backdrop-blur-md ${
+              isBadmash
+                ? 'border-purple-400/35 bg-[#120b1e]/92 text-slate-100'
+                : 'border-sky-400/30 bg-[#0b1120]/92 text-slate-100'
+            }`}
           >
-            <span className={latestTranscript.speaker === 'user' ? 'text-sky-300' : 'text-slate-400'}>
-              {latestTranscript.speaker === 'user' ? 'You:' : 'Cosmic:'}
+            <span
+              className={`font-semibold ${
+                captionEntry.speaker === 'user'
+                  ? 'text-sky-300'
+                  : isBadmash
+                    ? 'text-purple-300'
+                    : 'text-sky-300'
+              }`}
+            >
+              {captionEntry.speaker === 'user' ? 'You:' : 'Cosmic:'}
             </span>{' '}
-            <span>{latestTranscript.text}</span>
+            <span className="break-words whitespace-pre-wrap">{captionEntry.text}</span>
           </div>
         )}
       </div>

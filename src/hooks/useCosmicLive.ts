@@ -110,6 +110,7 @@ interface ServerWsMessage {
   message?: string;
   calls?: ToolCallPayload[];
   result?: LiveKnowledgeSearchResult;
+  ts?: number;
 }
 
 function buildVoiceTextureCurve(roughnessMix: number): Float32Array<ArrayBuffer> {
@@ -285,6 +286,7 @@ export function useCosmicLive() {
   const reconnectTimerRef = useRef<number | null>(null);
   const handshakeTimerRef = useRef<number | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
+  const lastPingSentAtRef = useRef<number | null>(null);
   const connectAttemptFnRef = useRef<((isRetry: boolean) => Promise<void>) | null>(null);
   const lastHealthErrorRef = useRef<string | null>(null);
   const recentToolFingerprintsRef = useRef<Map<string, number>>(new Map());
@@ -886,6 +888,18 @@ export function useCosmicLive() {
       }
 
       if (msg.type === 'pong') {
+        const sentAt =
+          typeof msg.ts === 'number' && Number.isFinite(msg.ts)
+            ? msg.ts
+            : lastPingSentAtRef.current;
+        if (typeof sentAt === 'number') {
+          const rttMs = Math.max(1, Math.round(Date.now() - sentAt));
+          lastPingSentAtRef.current = null;
+          setDiagnostics((prev) => ({
+            ...prev,
+            backendLatencyMs: rttMs,
+          }));
+        }
         return;
       }
 
@@ -1208,10 +1222,12 @@ export function useCosmicLive() {
     setCosmicState('IDLE');
     setErrorMessage(null);
     setMicNotice(null);
+    lastPingSentAtRef.current = null;
     setDiagnostics((prev) => ({
       ...prev,
       retryCount: 0,
       sessionResumptionStatus: 'none',
+      backendLatencyMs: null,
     }));
     addLog('info', 'gemini', 'Cosmic AI session powered off cleanly.');
   }, [addLog, clearAudioQueue, clearReconnectTimers, stopMicrophone]);
@@ -1353,11 +1369,15 @@ export function useCosmicLive() {
           );
 
           if (pingIntervalRef.current !== null) clearInterval(pingIntervalRef.current);
-          pingIntervalRef.current = window.setInterval(() => {
+          const sendTimestampedPing = () => {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'ping' }));
+              const now = Date.now();
+              lastPingSentAtRef.current = now;
+              ws.send(JSON.stringify({ type: 'ping', ts: now }));
             }
-          }, 25000);
+          };
+          sendTimestampedPing();
+          pingIntervalRef.current = window.setInterval(sendTimestampedPing, 5000);
         };
 
         ws.onmessage = (event) => {
@@ -1538,24 +1558,7 @@ export function useCosmicLive() {
           setPowerOnAdNotice(null);
           void connect();
         } else {
-          const snap = unityAdsSnapshotRef.current;
-          const rawErr =
-            snap?.rewardedState.rawErrorMessage || snap?.sdkStatus.rawErrorMessage;
-          const rawCode =
-            snap?.rewardedState.rawErrorCode || snap?.sdkStatus.rawErrorCode;
-          if (outcome === 'skipped') {
-            setPowerOnAdNotice(
-              'Ad skipped — watch the complete Rewarded Ad to Power On Cosmic AI.',
-            );
-          } else if (rawErr) {
-            setPowerOnAdNotice(
-              `Rewarded Ad failed (${rawCode ?? 'ERROR'}: ${rawErr}). Power On blocked until an ad loads.`,
-            );
-          } else {
-            setPowerOnAdNotice(
-              'Rewarded Ad is not loaded yet. Wait a few seconds and tap Power On again.',
-            );
-          }
+          setPowerOnAdNotice('Please try again.');
         }
       }
     },

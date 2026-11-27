@@ -47723,6 +47723,7 @@ function useCosmicLive() {
 	const reconnectTimerRef = (0, import_react.useRef)(null);
 	const handshakeTimerRef = (0, import_react.useRef)(null);
 	const pingIntervalRef = (0, import_react.useRef)(null);
+	const lastPingSentAtRef = (0, import_react.useRef)(null);
 	const connectAttemptFnRef = (0, import_react.useRef)(null);
 	const lastHealthErrorRef = (0, import_react.useRef)(null);
 	const recentToolFingerprintsRef = (0, import_react.useRef)(/* @__PURE__ */ new Map());
@@ -48169,7 +48170,18 @@ function useCosmicLive() {
 		} catch {
 			return;
 		}
-		if (msg.type === "pong") return;
+		if (msg.type === "pong") {
+			const sentAt = typeof msg.ts === "number" && Number.isFinite(msg.ts) ? msg.ts : lastPingSentAtRef.current;
+			if (typeof sentAt === "number") {
+				const rttMs = Math.max(1, Math.round(Date.now() - sentAt));
+				lastPingSentAtRef.current = null;
+				setDiagnostics((prev) => ({
+					...prev,
+					backendLatencyMs: rttMs
+				}));
+			}
+			return;
+		}
 		if (msg.type === "connected" || msg.type === "mode_updated") {
 			isSessionReadyRef.current = true;
 			retryCountRef.current = 0;
@@ -48395,10 +48407,12 @@ function useCosmicLive() {
 		setCosmicState("IDLE");
 		setErrorMessage(null);
 		setMicNotice(null);
+		lastPingSentAtRef.current = null;
 		setDiagnostics((prev) => ({
 			...prev,
 			retryCount: 0,
-			sessionResumptionStatus: "none"
+			sessionResumptionStatus: "none",
+			backendLatencyMs: null
 		}));
 		addLog("info", "gemini", "Cosmic AI session powered off cleanly.");
 	}, [
@@ -48497,9 +48511,18 @@ function useCosmicLive() {
 					conversationMemory: buildMemoryContextEntries(recentSessionsRef.current, transcriptsRef.current)
 				}));
 				if (pingIntervalRef.current !== null) clearInterval(pingIntervalRef.current);
-				pingIntervalRef.current = window.setInterval(() => {
-					if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
-				}, 25e3);
+				const sendTimestampedPing = () => {
+					if (ws.readyState === WebSocket.OPEN) {
+						const now = Date.now();
+						lastPingSentAtRef.current = now;
+						ws.send(JSON.stringify({
+							type: "ping",
+							ts: now
+						}));
+					}
+				};
+				sendTimestampedPing();
+				pingIntervalRef.current = window.setInterval(sendTimestampedPing, 5e3);
 			};
 			ws.onmessage = (event) => {
 				if (wsRef.current !== ws) return;
@@ -48641,14 +48664,7 @@ function useCosmicLive() {
 			if (event.grant_power_on) {
 				setPowerOnAdNotice(null);
 				connect();
-			} else {
-				const snap = unityAdsSnapshotRef.current;
-				const rawErr = snap?.rewardedState.rawErrorMessage || snap?.sdkStatus.rawErrorMessage;
-				const rawCode = snap?.rewardedState.rawErrorCode || snap?.sdkStatus.rawErrorCode;
-				if (outcome === "skipped") setPowerOnAdNotice("Ad skipped — watch the complete Rewarded Ad to Power On Cosmic AI.");
-				else if (rawErr) setPowerOnAdNotice(`Rewarded Ad failed (${rawCode ?? "ERROR"}: ${rawErr}). Power On blocked until an ad loads.`);
-				else setPowerOnAdNotice("Rewarded Ad is not loaded yet. Wait a few seconds and tap Power On again.");
-			}
+			} else setPowerOnAdNotice("Please try again.");
 		}
 	}, [addLog, connect]);
 	const dispatchRewardedAdTrigger = (0, import_react.useCallback)((trigger) => {
@@ -49059,6 +49075,34 @@ function useCosmicLive() {
 		clearMicNotice: () => setMicNotice(null)
 	};
 }
+// src/utils/latency.ts
+function classifyLatency(latencyMs, isLive = true) {
+	if (!isLive || typeof latencyMs !== "number" || !Number.isFinite(latencyMs) || latencyMs < 0) return {
+		tier: "idle",
+		label: "-- ms",
+		dotClass: "bg-slate-600",
+		textClass: "text-slate-500"
+	};
+	const rounded = Math.max(1, Math.round(latencyMs));
+	if (rounded < 150) return {
+		tier: "good",
+		label: `${rounded}ms`,
+		dotClass: "bg-emerald-400",
+		textClass: "text-emerald-300"
+	};
+	if (rounded <= 350) return {
+		tier: "moderate",
+		label: `${rounded}ms`,
+		dotClass: "bg-amber-300",
+		textClass: "text-amber-300"
+	};
+	return {
+		tier: "high",
+		label: `${rounded}ms`,
+		dotClass: "bg-red-400",
+		textClass: "text-red-300"
+	};
+}
 // src/App.tsx
 function App() {
 	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingPowerOnUnlock, powerOnAdNotice, lastAdRuleEvent, adElapsedActiveMs, sessionDurationMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, triggerRewardedAdManually, clearAdSnackbar, clearPowerOnAdNotice, clearError, clearMicNotice } = useCosmicLive();
@@ -49102,6 +49146,8 @@ function App() {
 		sendTextMessage(msg);
 	};
 	const latestTranscript = transcripts[transcripts.length - 1] || null;
+	const captionEntry = [...transcripts].reverse().find((entry) => entry.speaker === "cosmic") || latestTranscript;
+	const latencyStatus = classifyLatency(diagnostics.backendLatencyMs, isLive);
 	const showTextFallback = isLive && (isMicMuted || !diagnostics.micActive || Boolean(micNotice));
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "relative h-screen w-screen overflow-hidden bg-[#0c1220] text-slate-100 select-none",
@@ -49159,6 +49205,16 @@ function App() {
 						className: "pointer-events-auto flex items-center gap-2 sm:gap-3",
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								"data-testid": "latency-indicator",
+								"aria-label": `Network Latency ${latencyStatus.label}`,
+								title: "Real-time WebSocket ping latency",
+								className: "flex items-center gap-1.5 font-mono text-[10px] tabular-nums sm:text-xs",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-1.5 w-1.5 shrink-0 rounded-full ${latencyStatus.dotClass}` }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: latencyStatus.textClass,
+									children: latencyStatus.label
+								})]
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								"data-testid": "session-duration",
 								"aria-label": `Session Duration ${formatSessionDuration(sessionDurationMs)}`,
 								title: "Active voice session duration (auto-terminates at 40:00)",
@@ -49206,7 +49262,7 @@ function App() {
 				]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "pointer-events-none fixed inset-x-0 bottom-24 z-20 mx-auto flex w-[min(92vw,540px)] flex-col items-center gap-2 sm:bottom-24",
+				className: "pointer-events-none fixed inset-x-0 bottom-32 z-20 mx-auto flex w-[min(92vw,540px)] flex-col items-center gap-2 sm:bottom-24",
 				children: [
 					cosmicState === "RECONNECTING" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						role: "status",
@@ -49235,23 +49291,15 @@ function App() {
 					powerOnAdNotice && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						role: "alert",
 						"data-testid": "power-on-ad-notice",
-						className: "pointer-events-auto flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/45 bg-[#1b1409]/95 px-3 py-2 text-xs text-amber-100 shadow-lg",
+						className: "pointer-events-auto flex w-auto max-w-full items-center justify-between gap-3 rounded-xl border border-amber-400/45 bg-[#1b1409]/95 px-3.5 py-2 text-xs text-amber-100 shadow-lg",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-							className: "min-w-[160px] flex-1 break-words",
+							className: "font-medium",
 							children: powerOnAdNotice
-						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex shrink-0 items-center gap-2",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-								type: "button",
-								onClick: () => setAdsModalOpen(true),
-								className: "rounded-md border border-purple-400/50 bg-purple-500/20 px-2.5 py-1 font-semibold text-purple-100 hover:bg-purple-500/30",
-								children: "Ads Status"
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-								type: "button",
-								onClick: clearPowerOnAdNotice,
-								className: "font-semibold text-amber-300 hover:text-white",
-								children: "OK"
-							})]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							onClick: clearPowerOnAdNotice,
+							className: "shrink-0 font-semibold text-amber-300 hover:text-white",
+							children: "OK"
 						})]
 					}),
 					errorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -49382,16 +49430,19 @@ function App() {
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Send, { className: "h-3 w-3" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Send" })]
 						})]
 					}),
-					latestTranscript && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					captionEntry && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						"data-testid": "latest-transcript-pill",
-						className: "pointer-events-auto max-w-md truncate rounded-xl border border-white/10 bg-[#0d111d]/92 px-3.5 py-1.5 text-xs text-slate-200 shadow-lg",
+						className: `pointer-events-auto max-h-28 w-full max-w-md overflow-y-auto rounded-xl border px-3.5 py-2 text-xs leading-relaxed shadow-xl backdrop-blur-md ${isBadmash ? "border-purple-400/35 bg-[#120b1e]/92 text-slate-100" : "border-sky-400/30 bg-[#0b1120]/92 text-slate-100"}`,
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: latestTranscript.speaker === "user" ? "text-sky-300" : "text-slate-400",
-								children: latestTranscript.speaker === "user" ? "You:" : "Cosmic:"
+								className: `font-semibold ${captionEntry.speaker === "user" ? "text-sky-300" : isBadmash ? "text-purple-300" : "text-sky-300"}`,
+								children: captionEntry.speaker === "user" ? "You:" : "Cosmic:"
 							}),
 							" ",
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: latestTranscript.text })
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+								className: "break-words whitespace-pre-wrap",
+								children: captionEntry.text
+							})
 						]
 					})
 				]

@@ -81,6 +81,7 @@ interface ClientControlMessage {
     name: string;
     response: Record<string, unknown>;
   }>;
+  ts?: number;
 }
 
 function createGenAIClient(): GoogleGenAI {
@@ -961,7 +962,11 @@ async function startServer() {
 
       if (msg.type === 'ping') {
         isAlive = true;
-        sendJson(clientWs, { type: 'pong', serverTime: Date.now() });
+        sendJson(clientWs, {
+          type: 'pong',
+          ts: typeof msg.ts === 'number' && Number.isFinite(msg.ts) ? msg.ts : undefined,
+          serverTime: Date.now(),
+        });
         return;
       }
 
