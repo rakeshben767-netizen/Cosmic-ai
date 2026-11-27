@@ -23,9 +23,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.webkit.WebViewAssetLoader
 import com.cosmicai.ads.UnityAdsManager
 import com.cosmicai.bridge.CosmicNativeBridge
@@ -39,6 +37,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var rootContainer: FrameLayout
     private var pendingWebPermissionRequest: PermissionRequest? = null
+    private var isActivityResumed: Boolean = false
+    private val pendingSnackbarMessages = ArrayDeque<String>()
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -215,41 +215,41 @@ class MainActivity : AppCompatActivity() {
 
     private fun observeUnityAds() {
         lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    UnityAdsManager.userMessages.collect { message ->
-                        Snackbar.make(rootContainer, message, Snackbar.LENGTH_LONG).show()
-                        val quoted = JSONObject.quote(message)
-                        webView.evaluateJavascript(
-                            "window.__onCosmicUnityAdsMessage && window.__onCosmicUnityAdsMessage($quoted);",
-                            null
-                        )
-                    }
+            UnityAdsManager.userMessages.collect { message ->
+                if (isActivityResumed) {
+                    Snackbar.make(rootContainer, message, Snackbar.LENGTH_LONG).show()
+                } else {
+                    pendingSnackbarMessages.addLast(message)
                 }
-                launch {
-                    UnityAdsManager.ruleEvents.collect { event ->
-                        val payload = event.toJson().toString()
-                        webView.evaluateJavascript(
-                            "window.__onCosmicUnityAdsRuleEvent && window.__onCosmicUnityAdsRuleEvent($payload);",
-                            null
-                        )
-                    }
-                }
-                launch {
-                    combine(
-                        UnityAdsManager.sdkStatus,
-                        UnityAdsManager.rewardedState,
-                        UnityAdsManager.interstitialState,
-                        UnityAdsManager.counters
-                    ) { _, _, _, _ ->
-                        UnityAdsManager.getSnapshotJson().toString()
-                    }.collect { snapshotJson ->
-                        webView.evaluateJavascript(
-                            "window.__onCosmicUnityAdsState && window.__onCosmicUnityAdsState($snapshotJson);",
-                            null
-                        )
-                    }
-                }
+                val quoted = JSONObject.quote(message)
+                webView.evaluateJavascript(
+                    "window.__onCosmicUnityAdsMessage && window.__onCosmicUnityAdsMessage($quoted);",
+                    null
+                )
+            }
+        }
+        lifecycleScope.launch {
+            UnityAdsManager.ruleEvents.collect { event ->
+                val payload = event.toJson().toString()
+                webView.evaluateJavascript(
+                    "window.__onCosmicUnityAdsRuleEvent && window.__onCosmicUnityAdsRuleEvent($payload);",
+                    null
+                )
+            }
+        }
+        lifecycleScope.launch {
+            combine(
+                UnityAdsManager.sdkStatus,
+                UnityAdsManager.rewardedState,
+                UnityAdsManager.interstitialState,
+                UnityAdsManager.counters
+            ) { _, _, _, _ ->
+                UnityAdsManager.getSnapshotJson().toString()
+            }.collect { snapshotJson ->
+                webView.evaluateJavascript(
+                    "window.__onCosmicUnityAdsState && window.__onCosmicUnityAdsState($snapshotJson);",
+                    null
+                )
             }
         }
     }
@@ -264,7 +264,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        isActivityResumed = true
         UnityAdsManager.attachActivity(this)
+        while (pendingSnackbarMessages.isNotEmpty()) {
+            val msg = pendingSnackbarMessages.removeFirst()
+            Snackbar.make(rootContainer, msg, Snackbar.LENGTH_LONG).show()
+        }
+        pushUnityStateToWebView()
+    }
+
+    override fun onPause() {
+        isActivityResumed = false
+        super.onPause()
     }
 
     override fun onDestroy() {
