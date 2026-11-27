@@ -2052,6 +2052,7 @@ export function useCosmicLive() {
     updateBackendUrl,
     clearRecentSessions,
     reloadRewardedAd,
+    triggerRewardedAdManually: dispatchRewardedAdTrigger,
     clearAdSnackbar: () => setAdSnackbarMessage(null),
     clearError: () => setErrorMessage(null),
     clearMicNotice: () => setMicNotice(null),

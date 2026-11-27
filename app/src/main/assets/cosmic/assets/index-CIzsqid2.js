@@ -11992,6 +11992,23 @@ var Trash2 = createLucideIcon("trash-2", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var Tv = createLucideIcon("tv", [["path", {
+	d: "m17 2-5 5-5-5",
+	key: "16satq"
+}], ["rect", {
+	width: "20",
+	height: "15",
+	x: "2",
+	y: "7",
+	rx: "2",
+	key: "1e6viu"
+}]]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Volume2 = createLucideIcon("volume-2", [
 	["path", {
 		d: "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z",
@@ -45368,6 +45385,154 @@ function downloadSessionTranscriptTxt(session) {
 		return false;
 	}
 }
+// src/components/UnityAdsStatusCard.tsx
+function UnityAdsStatusCard({ unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs = 0, hasNativeBridge, onReloadRewardedAd, onTestRewardedAd }) {
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "space-y-2.5 rounded-lg border border-white/10 bg-[#131726] p-3 text-xs text-slate-200",
+		"data-testid": "unity-ads-status-card",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "flex flex-wrap items-center justify-between gap-2",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					className: "font-semibold text-slate-100",
+					children: "Unity Ads Status Card"
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-center gap-1.5",
+					children: [onReloadRewardedAd && hasNativeBridge && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						onClick: onReloadRewardedAd,
+						className: "rounded border border-sky-400/35 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200 hover:bg-sky-500/25",
+						children: "Load Rewarded"
+					}), onTestRewardedAd && hasNativeBridge && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						onClick: () => onTestRewardedAd("interval_5m"),
+						className: "rounded border border-purple-400/35 bg-purple-500/15 px-2 py-0.5 text-[10px] font-semibold text-purple-200 hover:bg-purple-500/25",
+						children: "Show Rewarded"
+					})]
+				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dl", {
+				className: "grid grid-cols-2 gap-y-1 font-mono text-[11px] tabular-nums",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+						className: "text-slate-400",
+						children: "Game ID / Test Mode"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dd", {
+						className: "text-right text-slate-100",
+						children: [
+							unityAdsSnapshot?.unityGameId ?? "800447797",
+							" ·",
+							" ",
+							String(unityAdsSnapshot?.testMode ?? false)
+						]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+						className: "text-slate-400",
+						children: "SDK Status"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
+						className: "text-right text-slate-100",
+						children: unityAdsSnapshot?.sdkStatus.phase ?? (hasNativeBridge ? "INITIALIZING" : "ANDROID_APK_ONLY")
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+						className: "text-slate-400",
+						children: "Rewarded (BP_Rewarded_Android)"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
+						className: "text-right text-slate-100",
+						children: unityAdsSnapshot?.rewardedState.phase ?? "IDLE"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+						className: "text-slate-400",
+						children: "Interstitial (BP_Interstitial_Android)"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
+						className: "text-right text-slate-100",
+						children: unityAdsSnapshot?.interstitialState.phase ?? "IDLE"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+						className: "text-slate-400",
+						children: "Active 5m Timer"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dd", {
+						className: "text-right text-sky-300",
+						children: [Math.floor(adElapsedActiveMs / 1e3), "s / 300s"]
+					})
+				]
+			}),
+			unityAdsSnapshot?.sdkStatus.rawErrorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "rounded border border-red-500/35 bg-red-500/10 p-2 font-mono text-[10px] text-red-200",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: ["SDK Error Code: ", unityAdsSnapshot.sdkStatus.rawErrorCode ?? "NONE"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "mt-0.5 break-words",
+					children: ["SDK Error: ", unityAdsSnapshot.sdkStatus.rawErrorMessage]
+				})]
+			}),
+			unityAdsSnapshot?.rewardedState.rawErrorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "rounded border border-amber-500/35 bg-amber-500/10 p-2 font-mono text-[10px] text-amber-200",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: ["Rewarded Error Code: ", unityAdsSnapshot.rewardedState.rawErrorCode ?? "NONE"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "mt-0.5 break-words",
+					children: ["Rewarded Error: ", unityAdsSnapshot.rewardedState.rawErrorMessage]
+				})]
+			}),
+			unityAdsSnapshot?.interstitialState.rawErrorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "rounded border border-amber-500/35 bg-amber-500/10 p-2 font-mono text-[10px] text-amber-200",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+					"Interstitial Error Code:",
+					" ",
+					unityAdsSnapshot.interstitialState.rawErrorCode ?? "NONE"
+				] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "mt-0.5 break-words",
+					children: ["Interstitial Error: ", unityAdsSnapshot.interstitialState.rawErrorMessage]
+				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "grid grid-cols-5 gap-1 rounded border border-white/10 bg-[#0a0d16] p-2 text-center font-mono text-[10px] tabular-nums",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-slate-400",
+						children: "Load OK"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-emerald-300",
+						children: unityAdsSnapshot?.counters.loadSuccess ?? 0
+					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-slate-400",
+						children: "Load Fail"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-red-300",
+						children: unityAdsSnapshot?.counters.loadFailed ?? 0
+					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-slate-400",
+						children: "Impr."
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-sky-300",
+						children: unityAdsSnapshot?.counters.impressions ?? 0
+					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-slate-400",
+						children: "Clicks"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-purple-300",
+						children: unityAdsSnapshot?.counters.clicks ?? 0
+					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-slate-400",
+						children: "Skips"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "text-amber-300",
+						children: unityAdsSnapshot?.counters.skips ?? 0
+					})] })
+				]
+			}),
+			lastAdRuleEvent && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("pre", {
+				className: "overflow-x-auto rounded border border-white/10 bg-[#090b12] p-2 font-mono text-[10px] text-slate-300",
+				children: JSON.stringify(lastAdRuleEvent)
+			})
+		]
+	});
+}
 // src/components/DiagnosticsDrawer.tsx
 function DiagnosticsDrawer({ open, onClose, mode, diagnostics, speakerTestResult, unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs = 0, bridgeRuntime, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, onTestSpeaker, onRunSafeAction, onUpdateBackendUrl, onClearRecentSessions, onReloadRewardedAd }) {
 	const [activeTab, setActiveTab] = (0, import_react.useState)("audio");
@@ -45628,129 +45793,12 @@ function DiagnosticsDrawer({ open, onClose, mode, diagnostics, speakerTestResult
 									})
 								]
 							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "space-y-2.5 rounded-lg border border-white/10 bg-[#131726] p-3",
-								"data-testid": "unity-ads-status-card",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center justify-between gap-2",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "font-semibold text-slate-100",
-											children: "Unity Ads Status Card"
-										}), onReloadRewardedAd && bridgeRuntime.hasNativeBridge && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-											type: "button",
-											onClick: onReloadRewardedAd,
-											className: "rounded border border-sky-400/35 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200 hover:bg-sky-500/25",
-											children: "Reload Rewarded"
-										})]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dl", {
-										className: "grid grid-cols-2 gap-y-1 font-mono text-[11px] tabular-nums",
-										children: [
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
-												className: "text-slate-400",
-												children: "SDK Status"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
-												className: "text-right text-slate-100",
-												children: unityAdsSnapshot?.sdkStatus.phase ?? "WEB_FALLBACK"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
-												className: "text-slate-400",
-												children: "Rewarded (BP_Rewarded_Android)"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
-												className: "text-right text-slate-100",
-												children: unityAdsSnapshot?.rewardedState.phase ?? "IDLE"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
-												className: "text-slate-400",
-												children: "Interstitial (BP_Interstitial_Android)"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
-												className: "text-right text-slate-100",
-												children: unityAdsSnapshot?.interstitialState.phase ?? "IDLE"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
-												className: "text-slate-400",
-												children: "Active 5m Timer"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dd", {
-												className: "text-right text-sky-300",
-												children: [Math.floor(adElapsedActiveMs / 1e3), "s / 300s"]
-											})
-										]
-									}),
-									unityAdsSnapshot?.sdkStatus.rawErrorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "rounded border border-red-500/35 bg-red-500/10 p-2 font-mono text-[10px] text-red-200",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: ["SDK Error Code: ", unityAdsSnapshot.sdkStatus.rawErrorCode ?? "NONE"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-											className: "mt-0.5 break-words",
-											children: ["SDK Error: ", unityAdsSnapshot.sdkStatus.rawErrorMessage]
-										})]
-									}),
-									unityAdsSnapshot?.rewardedState.rawErrorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "rounded border border-amber-500/35 bg-amber-500/10 p-2 font-mono text-[10px] text-amber-200",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: ["Rewarded Error Code: ", unityAdsSnapshot.rewardedState.rawErrorCode ?? "NONE"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-											className: "mt-0.5 break-words",
-											children: ["Rewarded Error: ", unityAdsSnapshot.rewardedState.rawErrorMessage]
-										})]
-									}),
-									unityAdsSnapshot?.interstitialState.rawErrorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "rounded border border-amber-500/35 bg-amber-500/10 p-2 font-mono text-[10px] text-amber-200",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-											"Interstitial Error Code:",
-											" ",
-											unityAdsSnapshot.interstitialState.rawErrorCode ?? "NONE"
-										] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-											className: "mt-0.5 break-words",
-											children: ["Interstitial Error: ", unityAdsSnapshot.interstitialState.rawErrorMessage]
-										})]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "grid grid-cols-5 gap-1 rounded border border-white/10 bg-[#0a0d16] p-2 text-center font-mono text-[10px] tabular-nums",
-										children: [
-											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-slate-400",
-												children: "Load OK"
-											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-emerald-300",
-												children: unityAdsSnapshot?.counters.loadSuccess ?? 0
-											})] }),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-slate-400",
-												children: "Load Fail"
-											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-red-300",
-												children: unityAdsSnapshot?.counters.loadFailed ?? 0
-											})] }),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-slate-400",
-												children: "Impr."
-											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-sky-300",
-												children: unityAdsSnapshot?.counters.impressions ?? 0
-											})] }),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-slate-400",
-												children: "Clicks"
-											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-purple-300",
-												children: unityAdsSnapshot?.counters.clicks ?? 0
-											})] }),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-slate-400",
-												children: "Skips"
-											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-												className: "text-amber-300",
-												children: unityAdsSnapshot?.counters.skips ?? 0
-											})] })
-										]
-									}),
-									lastAdRuleEvent && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("pre", {
-										className: "overflow-x-auto rounded border border-white/10 bg-[#090b12] p-2 font-mono text-[10px] text-slate-300",
-										children: JSON.stringify(lastAdRuleEvent)
-									})
-								]
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(UnityAdsStatusCard, {
+								unityAdsSnapshot,
+								lastAdRuleEvent,
+								adElapsedActiveMs,
+								hasNativeBridge: bridgeRuntime.hasNativeBridge,
+								onReloadRewardedAd
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "space-y-2.5 rounded-lg border border-white/10 bg-[#131726] p-3",
@@ -46584,6 +46632,43 @@ function SettingsFeaturesModal({ open, onClose, mode, cosmicState, features, dia
 					})]
 				})
 			]
+		})
+	});
+}
+// src/components/UnityAdsModal.tsx
+function UnityAdsModal({ open, onClose, unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs, hasNativeBridge, onReloadRewardedAd, onTestRewardedAd }) {
+	if (!open) return null;
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+		className: "fixed inset-0 z-40 flex items-center justify-center bg-black/65 p-4",
+		role: "dialog",
+		"aria-modal": "true",
+		"aria-label": "Unity Ads Status",
+		"data-testid": "unity-ads-modal",
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+			className: "w-full max-w-md rounded-2xl border border-white/15 bg-[#0d101b] p-4 shadow-2xl",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mb-3 flex items-center justify-between",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-center gap-2",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tv, { className: "h-4 w-4 text-sky-400" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+						className: "font-display text-sm font-bold tracking-wide text-white",
+						children: "Unity Ads Status"
+					})]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+					type: "button",
+					onClick: onClose,
+					"aria-label": "Close Unity Ads Status",
+					className: "flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { className: "h-4 w-4" })
+				})]
+			}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UnityAdsStatusCard, {
+				unityAdsSnapshot,
+				lastAdRuleEvent,
+				adElapsedActiveMs,
+				hasNativeBridge,
+				onReloadRewardedAd,
+				onTestRewardedAd
+			})]
 		})
 	});
 }
@@ -48892,6 +48977,7 @@ function useCosmicLive() {
 		updateBackendUrl,
 		clearRecentSessions,
 		reloadRewardedAd,
+		triggerRewardedAdManually: dispatchRewardedAdTrigger,
 		clearAdSnackbar: () => setAdSnackbarMessage(null),
 		clearError: () => setErrorMessage(null),
 		clearMicNotice: () => setMicNotice(null)
@@ -48899,9 +48985,10 @@ function useCosmicLive() {
 }
 // src/App.tsx
 function App() {
-	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingBadmashUnlock, lastAdRuleEvent, adElapsedActiveMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, clearAdSnackbar, clearError, clearMicNotice } = useCosmicLive();
+	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingBadmashUnlock, lastAdRuleEvent, adElapsedActiveMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, triggerRewardedAdManually, clearAdSnackbar, clearError, clearMicNotice } = useCosmicLive();
 	const [resetViewSignal, setResetViewSignal] = (0, import_react.useState)(0);
 	const [privacyModalOpen, setPrivacyModalOpen] = (0, import_react.useState)(false);
+	const [adsModalOpen, setAdsModalOpen] = (0, import_react.useState)(false);
 	const [adminDrawerRequested, setAdminDrawerRequested] = (0, import_react.useState)(false);
 	const [textDraft, setTextDraft] = (0, import_react.useState)("");
 	const brandTapTimesRef = (0, import_react.useRef)([]);
@@ -48994,22 +49081,34 @@ function App() {
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						className: "pointer-events-auto flex items-center gap-2",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-							type: "button",
-							onClick: () => setPrivacyModalOpen(true),
-							"data-testid": "privacy-policy-button",
-							"aria-label": "Privacy Policy",
-							title: "Privacy Policy",
-							className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
-							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ShieldCheck, { className: "h-4 w-4 text-sky-400" })
-						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-							type: "button",
-							onClick: () => setResetViewSignal((n) => n + 1),
-							"aria-label": "Reset camera view",
-							title: "Reset Camera View",
-							className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
-							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RotateCcw, { className: "h-4 w-4" })
-						})]
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => setAdsModalOpen(true),
+								"data-testid": "unity-ads-status-button",
+								"aria-label": "Unity Ads Status",
+								title: "Unity Ads Status",
+								className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tv, { className: "h-4 w-4 text-purple-300" })
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => setPrivacyModalOpen(true),
+								"data-testid": "privacy-policy-button",
+								"aria-label": "Privacy Policy",
+								title: "Privacy Policy",
+								className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ShieldCheck, { className: "h-4 w-4 text-sky-400" })
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => setResetViewSignal((n) => n + 1),
+								"aria-label": "Reset camera view",
+								title: "Reset Camera View",
+								className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RotateCcw, { className: "h-4 w-4" })
+							})
+						]
 					})
 				]
 			}),
@@ -49218,6 +49317,16 @@ function App() {
 						})
 					]
 				})
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(UnityAdsModal, {
+				open: adsModalOpen,
+				onClose: () => setAdsModalOpen(false),
+				unityAdsSnapshot,
+				lastAdRuleEvent,
+				adElapsedActiveMs,
+				hasNativeBridge: bridgeRuntime.hasNativeBridge,
+				onReloadRewardedAd: reloadRewardedAd,
+				onTestRewardedAd: triggerRewardedAdManually
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrivacyPolicyModal, {
 				open: privacyModalOpen,

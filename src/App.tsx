@@ -12,12 +12,14 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Tv,
   X,
 } from 'lucide-react';
 import { AdminAccessModal } from './components/AdminAccessModal.tsx';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
 import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
+import { UnityAdsModal } from './components/UnityAdsModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
 
@@ -64,6 +66,7 @@ export default function App() {
     updateBackendUrl,
     clearRecentSessions,
     reloadRewardedAd,
+    triggerRewardedAdManually,
     clearAdSnackbar,
     clearError,
     clearMicNotice,
@@ -71,6 +74,7 @@ export default function App() {
 
   const [resetViewSignal, setResetViewSignal] = useState(0);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
+  const [adsModalOpen, setAdsModalOpen] = useState(false);
   const [adminDrawerRequested, setAdminDrawerRequested] = useState(false);
   const [textDraft, setTextDraft] = useState('');
 
@@ -184,6 +188,17 @@ export default function App() {
         </div>
 
         <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAdsModalOpen(true)}
+            data-testid="unity-ads-status-button"
+            aria-label="Unity Ads Status"
+            title="Unity Ads Status"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
+          >
+            <Tv className="h-4 w-4 text-purple-300" />
+          </button>
+
           <button
             type="button"
             onClick={() => setPrivacyModalOpen(true)}
@@ -477,6 +492,18 @@ export default function App() {
           </button>
         </div>
       </footer>
+
+      {/* Unity Ads Status Card Modal */}
+      <UnityAdsModal
+        open={adsModalOpen}
+        onClose={() => setAdsModalOpen(false)}
+        unityAdsSnapshot={unityAdsSnapshot}
+        lastAdRuleEvent={lastAdRuleEvent}
+        adElapsedActiveMs={adElapsedActiveMs}
+        hasNativeBridge={bridgeRuntime.hasNativeBridge}
+        onReloadRewardedAd={reloadRewardedAd}
+        onTestRewardedAd={triggerRewardedAdManually}
+      />
 
       {/* Privacy Policy Modal */}
       <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
