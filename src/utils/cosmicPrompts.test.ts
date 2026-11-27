@@ -15,7 +15,10 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
 
   it('includes live knowledge, Bambaiya/Marathi knowledge base, shayari, rap battle, and never leaks verification code in prompt', () => {
     const badmashPrompt = buildCosmicSystemInstruction('badmash');
-    assert.match(badmashPrompt, /LIVE KNOWLEDGE ENGINE/i);
+    assert.match(badmashPrompt, /LIVE DATA & KNOWLEDGE ENGINE/i);
+    assert.match(badmashPrompt, /gold\/silver/i);
+    assert.match(badmashPrompt, /IPL/i);
+    assert.match(badmashPrompt, /weather/i);
     assert.match(badmashPrompt, /MUMBAI TAPORI & MARATHI SEMANTIC KNOWLEDGE BASE/i);
     assert.match(badmashPrompt, /ROAST BATTLE ENGINE/i);
     assert.match(badmashPrompt, /DOUBLE-MEANING COMEDY ENGINE/i);

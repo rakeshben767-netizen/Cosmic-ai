@@ -28,6 +28,10 @@ import {
   downloadSessionTranscriptTxt,
   formatSessionTimestamp,
 } from '../utils/conversationHistory.ts';
+import {
+  formatSessionDuration,
+  type PersistedSessionDurationState,
+} from '../utils/sessionDuration.ts';
 import { UnityAdsStatusCard } from './UnityAdsStatusCard.tsx';
 
 interface DiagnosticsDrawerProps {
@@ -39,6 +43,8 @@ interface DiagnosticsDrawerProps {
   unityAdsSnapshot?: UnityAdsSnapshot | null;
   lastAdRuleEvent?: RewardedAdRuleEvent | null;
   adElapsedActiveMs?: number;
+  sessionDurationMs?: number;
+  sessionDurationState?: PersistedSessionDurationState;
   bridgeRuntime: { hasNativeBridge: boolean; runtimeLabel: string };
   backendUrl: string;
   transcripts: TranscriptEntry[];
@@ -61,6 +67,8 @@ export function DiagnosticsDrawer({
   unityAdsSnapshot,
   lastAdRuleEvent,
   adElapsedActiveMs = 0,
+  sessionDurationMs = 0,
+  sessionDurationState,
   bridgeRuntime,
   backendUrl,
   transcripts,
@@ -221,6 +229,16 @@ export function DiagnosticsDrawer({
                   {diagnostics.backendLatencyMs !== null
                     ? `${diagnostics.backendLatencyMs}ms`
                     : '—'}
+                </dd>
+
+                <dt className="text-slate-400">Bg Session Cycle (40m)</dt>
+                <dd className="text-right text-sky-300">
+                  {formatSessionDuration(sessionDurationMs)} / 40:00
+                </dd>
+
+                <dt className="text-slate-400">Total Lifetime Usage</dt>
+                <dd className="text-right text-emerald-300">
+                  {formatSessionDuration(sessionDurationState?.totalLifetimeMs ?? 0)} ({sessionDurationState?.history.length ?? 0} logs)
                 </dd>
 
                 <dt className="text-slate-400">Last Close Code</dt>

@@ -55,7 +55,15 @@ import {
   probeVoiceBackendHealth,
   shouldAutoReconnect,
 } from '../utils/connectionManager.ts';
-import { evaluateSessionElapsed } from '../utils/sessionDuration.ts';
+import {
+  evaluateSessionElapsed,
+  loadPersistedSessionDurationState,
+  MAX_SESSION_DURATION_MS,
+  savePersistedSessionDurationState,
+  upsertSessionDurationProgress,
+  type PersistedSessionDurationState,
+  type SessionEndReason,
+} from '../utils/sessionDuration.ts';
 
 const WORKLET_PROCESSOR_CODE = `
 class CosmicMicProcessor extends AudioWorkletProcessor {
@@ -228,7 +236,12 @@ export function useCosmicLive() {
   const [powerOnAdNotice, setPowerOnAdNotice] = useState<string | null>(null);
   const [lastAdRuleEvent, setLastAdRuleEvent] = useState<RewardedAdRuleEvent | null>(null);
   const [adElapsedActiveMs, setAdElapsedActiveMs] = useState<number>(0);
-  const [sessionDurationMs, setSessionDurationMs] = useState<number>(0);
+  const [sessionDurationState, setSessionDurationState] = useState<PersistedSessionDurationState>(
+    () => loadPersistedSessionDurationState(),
+  );
+  const [sessionDurationMs, setSessionDurationMs] = useState<number>(
+    () => loadPersistedSessionDurationState().activeElapsedMs,
+  );
   const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
     contextState: 'uninitialized',
     sampleRate: 0,
@@ -256,9 +269,12 @@ export function useCosmicLive() {
   const backendUrlRef = useRef<string>(backendUrl);
   const transcriptsRef = useRef<TranscriptEntry[]>(transcripts);
   const recentSessionsRef = useRef<ConversationSessionRecord[]>(recentSessions);
+  const sessionDurationStateRef = useRef<PersistedSessionDurationState>(sessionDurationState);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeSessionStartedAtRef = useRef<number>(Date.now());
   const activeVoiceSessionStartedAtRef = useRef<number | null>(null);
+  const durationSegmentIdRef = useRef<string | null>(null);
+  const durationSegmentStartedAtRef = useRef<number | null>(null);
   const audioLevelRef = useRef<number>(0);
 
   // Persistent single AudioContext + Badmash Husky/Bass EQ -> Compressor -> GainNode -> Analyser -> destination
@@ -345,6 +361,36 @@ export function useCosmicLive() {
   useEffect(() => {
     recentSessionsRef.current = recentSessions;
   }, [recentSessions]);
+
+  useEffect(() => {
+    sessionDurationStateRef.current = sessionDurationState;
+  }, [sessionDurationState]);
+
+  const persistDurationCheckpoint = useCallback((reason: SessionEndReason) => {
+    const cycleAnchor = activeVoiceSessionStartedAtRef.current;
+    const segId = durationSegmentIdRef.current;
+    const segStart = durationSegmentStartedAtRef.current;
+    if (cycleAnchor === null || !segId || segStart === null) return;
+
+    const nowMs = Date.now();
+    const segmentDurationMs = Math.max(0, nowMs - segStart);
+    const cycleElapsedMs =
+      reason === 'limit_40m' ? MAX_SESSION_DURATION_MS : Math.max(0, nowMs - cycleAnchor);
+
+    const next = savePersistedSessionDurationState(
+      upsertSessionDurationProgress(sessionDurationStateRef.current, {
+        sessionId: segId,
+        startedAt: segStart,
+        nowMs,
+        cycleElapsedMs,
+        segmentDurationMs,
+        reason,
+      }),
+    );
+    sessionDurationStateRef.current = next;
+    setSessionDurationState(next);
+    setSessionDurationMs(next.activeElapsedMs);
+  }, []);
 
   const addLog = useCallback(
     (
@@ -826,8 +872,10 @@ export function useCosmicLive() {
       if (!canRetry) {
         userWantsLiveRef.current = false;
         isSessionReadyRef.current = false;
+        persistDurationCheckpoint('user_disconnect');
         activeVoiceSessionStartedAtRef.current = null;
-        setSessionDurationMs(0);
+        durationSegmentIdRef.current = null;
+        durationSegmentStartedAtRef.current = null;
         clearReconnectTimers();
         stopMicrophone();
         const reasonText = formatConnectionFailureReason({
@@ -875,7 +923,7 @@ export function useCosmicLive() {
         void connectAttemptFnRef.current?.(true);
       }, delayMs);
     },
-    [addLog, clearReconnectTimers, stopMicrophone],
+    [addLog, clearReconnectTimers, persistDurationCheckpoint, stopMicrophone],
   );
 
   const handleServerMessage = useCallback(
@@ -908,8 +956,12 @@ export function useCosmicLive() {
         retryCountRef.current = 0;
         lastHealthErrorRef.current = null;
         if (activeVoiceSessionStartedAtRef.current === null) {
-          activeVoiceSessionStartedAtRef.current = Date.now();
-          setSessionDurationMs(0);
+          const now = Date.now();
+          const resumedElapsedMs = sessionDurationStateRef.current.activeElapsedMs;
+          activeVoiceSessionStartedAtRef.current = now - resumedElapsedMs;
+          durationSegmentIdRef.current = `dur_${now}_${Math.random().toString(36).slice(2, 6)}`;
+          durationSegmentStartedAtRef.current = now;
+          setSessionDurationMs(resumedElapsedMs);
         }
         if (handshakeTimerRef.current !== null) {
           clearTimeout(handshakeTimerRef.current);
@@ -1202,8 +1254,10 @@ export function useCosmicLive() {
     retryCountRef.current = 0;
     resumeHandleRef.current = null;
     activeSessionIdRef.current = null;
+    persistDurationCheckpoint('user_disconnect');
     activeVoiceSessionStartedAtRef.current = null;
-    setSessionDurationMs(0);
+    durationSegmentIdRef.current = null;
+    durationSegmentStartedAtRef.current = null;
     clearReconnectTimers();
     clearAudioQueue('user-disconnect');
     stopMicrophone();
@@ -1230,7 +1284,7 @@ export function useCosmicLive() {
       backendLatencyMs: null,
     }));
     addLog('info', 'gemini', 'Cosmic AI session powered off cleanly.');
-  }, [addLog, clearAudioQueue, clearReconnectTimers, stopMicrophone]);
+  }, [addLog, clearAudioQueue, clearReconnectTimers, persistDurationCheckpoint, stopMicrophone]);
 
   const executeConnectAttempt = useCallback(
     async (isRetry: boolean) => {
@@ -2045,14 +2099,13 @@ export function useCosmicLive() {
     };
   }, [dispatchRewardedAdTrigger, handleAdResolution]);
 
-  // Track active voice session duration and auto-terminate cleanly at 40 minutes
+  // Track active voice session duration in background, persist across app cuts, and reset at 40 minutes
   useEffect(() => {
     if (cosmicState === 'IDLE' || cosmicState === 'ERROR') {
-      activeVoiceSessionStartedAtRef.current = null;
-      setSessionDurationMs(0);
       return;
     }
 
+    let tickCount = 0;
     const tickDuration = () => {
       const { elapsedMs, shouldTerminate } = evaluateSessionElapsed(
         activeVoiceSessionStartedAtRef.current,
@@ -2064,18 +2117,42 @@ export function useCosmicLive() {
           'gemini',
           'Active voice session reached 40-minute limit; terminating connection and resetting session duration.',
         );
+        persistDurationCheckpoint('limit_40m');
+        activeVoiceSessionStartedAtRef.current = null;
+        durationSegmentIdRef.current = null;
+        durationSegmentStartedAtRef.current = null;
         disconnect();
         return;
       }
       setSessionDurationMs(elapsedMs);
+      tickCount += 1;
+      if (tickCount % 2 === 0) {
+        persistDurationCheckpoint('active');
+      }
+    };
+
+    const flushOnAppCut = () => {
+      persistDurationCheckpoint('active');
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        persistDurationCheckpoint('active');
+      }
     };
 
     tickDuration();
     const timerId = window.setInterval(tickDuration, 1000);
+    window.addEventListener('pagehide', flushOnAppCut);
+    window.addEventListener('beforeunload', flushOnAppCut);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       window.clearInterval(timerId);
+      window.removeEventListener('pagehide', flushOnAppCut);
+      window.removeEventListener('beforeunload', flushOnAppCut);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [addLog, cosmicState, disconnect]);
+  }, [addLog, cosmicState, disconnect, persistDurationCheckpoint]);
 
   const reloadRewardedAd = useCallback(async () => {
     const bridge = getCosmicNativeBridge();
@@ -2113,6 +2190,7 @@ export function useCosmicLive() {
     lastAdRuleEvent,
     adElapsedActiveMs,
     sessionDurationMs,
+    sessionDurationState,
     bridgeRuntime: bridgeEnv.current,
     audioLevelRef,
     togglePower,

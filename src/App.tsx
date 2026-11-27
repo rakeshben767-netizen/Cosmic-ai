@@ -12,18 +12,15 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
-  Tv,
   X,
 } from 'lucide-react';
 import { AdminAccessModal } from './components/AdminAccessModal.tsx';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
 import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
-import { UnityAdsModal } from './components/UnityAdsModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
 import { classifyLatency } from './utils/latency.ts';
-import { formatSessionDuration } from './utils/sessionDuration.ts';
 
 export default function App() {
   const {
@@ -51,6 +48,7 @@ export default function App() {
     lastAdRuleEvent,
     adElapsedActiveMs,
     sessionDurationMs,
+    sessionDurationState,
     bridgeRuntime,
     audioLevelRef,
     togglePower,
@@ -70,7 +68,6 @@ export default function App() {
     updateBackendUrl,
     clearRecentSessions,
     reloadRewardedAd,
-    triggerRewardedAdManually,
     clearAdSnackbar,
     clearPowerOnAdNotice,
     clearError,
@@ -79,7 +76,6 @@ export default function App() {
 
   const [resetViewSignal, setResetViewSignal] = useState(0);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
-  const [adsModalOpen, setAdsModalOpen] = useState(false);
   const [adminDrawerRequested, setAdminDrawerRequested] = useState(false);
   const [textDraft, setTextDraft] = useState('');
 
@@ -165,112 +161,90 @@ export default function App() {
       />
 
       {/* Minimalist Top Bar */}
-      <header className="pointer-events-none fixed top-0 inset-x-0 z-20 flex items-center justify-between px-4 py-3 sm:px-6">
-        <button
-          type="button"
-          onClick={handleHiddenBrandTap}
-          className="font-display pointer-events-auto cursor-pointer text-sm font-bold tracking-[0.14em] text-white uppercase sm:text-base"
-        >
-          COSMIC AI
-        </button>
+      <header className="pointer-events-none fixed top-0 inset-x-0 z-20 flex flex-col gap-1.5 px-4 pt-3 pb-2 sm:px-6">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={handleHiddenBrandTap}
+            className="font-display pointer-events-auto cursor-pointer text-sm font-bold tracking-[0.14em] text-white uppercase sm:text-base"
+          >
+            COSMIC AI
+          </button>
 
-        <div className="hidden items-center gap-2 font-mono text-xs text-slate-300 sm:flex">
-          <span className={`font-semibold tracking-wider ${stateColorClass}`} data-testid="cosmic-state-label">
-            {cosmicState}
-          </span>
-          <span className="text-slate-600">·</span>
-          <span className="text-slate-200">
-            {isBadmash ? 'Cosmic Ball · Savage Mode' : 'Cosmic Ball · Normal Mode'}
-          </span>
-          <span className="text-slate-600">·</span>
-          <span className="text-slate-400">
-            {isBadmash ? 'Don Voice (Charon)' : 'Voice (Zephyr)'}
-          </span>
-          {isDeveloperVerified && (
-            <>
-              <span className="text-slate-600">·</span>
-              <span className="text-emerald-300" data-testid="respect-mode-label">
-                Respect Mode
+          <div className="hidden items-center gap-2 font-mono text-xs text-slate-300 sm:flex">
+            <span className={`font-semibold tracking-wider ${stateColorClass}`} data-testid="cosmic-state-label">
+              {cosmicState}
+            </span>
+            <span className="text-slate-600">·</span>
+            <span className="text-slate-200">
+              {isBadmash ? 'Cosmic Ball · Savage Mode' : 'Cosmic Ball · Normal Mode'}
+            </span>
+            <span className="text-slate-600">·</span>
+            <span className="text-slate-400">
+              {isBadmash ? 'Don Voice (Charon)' : 'Voice (Zephyr)'}
+            </span>
+            {isDeveloperVerified && (
+              <>
+                <span className="text-slate-600">·</span>
+                <span className="text-emerald-300" data-testid="respect-mode-label">
+                  Respect Mode
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="pointer-events-auto flex items-center gap-2 sm:gap-3">
+            <div
+              data-testid="latency-indicator"
+              aria-label={`Network Ping ${latencyStatus.label} (${latencyStatus.meaning})`}
+              title="Network Ping: Green = Best Net (<150ms), Yellow = Medium (150-350ms), Red = Low (>350ms)"
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#0d101b]/80 px-2 py-1 font-mono text-[10px] tabular-nums sm:text-xs"
+            >
+              <span className={`h-2 w-2 shrink-0 rounded-full ${latencyStatus.dotClass}`} />
+              <span className={latencyStatus.textClass}>
+                {latencyStatus.label} · {latencyStatus.meaning}
               </span>
-            </>
-          )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setPrivacyModalOpen(true)}
+              data-testid="privacy-policy-button"
+              aria-label="Privacy Policy"
+              title="Privacy Policy"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
+            >
+              <ShieldCheck className="h-4 w-4 text-sky-400" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setResetViewSignal((n) => n + 1)}
+              aria-label="Reset camera view"
+              title="Reset Camera View"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
+            >
+              <RotateCcw className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
-        <div className="pointer-events-auto flex items-center gap-2 sm:gap-3">
+        {/* Top Network Quality & Legend Notice (English) */}
+        <div className="flex justify-center">
           <div
-            data-testid="latency-indicator"
-            aria-label={`Network Latency ${latencyStatus.label}`}
-            title="Real-time WebSocket ping latency"
-            className="flex items-center gap-1.5 font-mono text-[10px] tabular-nums sm:text-xs"
+            data-testid="network-quality-banner"
+            className={`rounded-lg border px-2.5 py-0.5 text-center text-[10px] leading-snug backdrop-blur-sm sm:text-[11px] ${
+              diagnostics.networkStatus === 'offline' || latencyStatus.tier === 'high'
+                ? 'border-red-500/45 bg-[#1a0d12]/85 font-medium text-red-300'
+                : latencyStatus.tier === 'moderate'
+                  ? 'border-yellow-400/35 bg-[#19160a]/80 text-yellow-200'
+                  : 'border-white/8 bg-[#0b101d]/65 text-slate-400'
+            }`}
           >
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${latencyStatus.dotClass}`} />
-            <span className={latencyStatus.textClass}>{latencyStatus.label}</span>
+            {diagnostics.networkStatus === 'offline' || latencyStatus.tier === 'high'
+              ? 'Weak network detected — Cosmic AI will not work properly without a good connection.'
+              : 'If your network is not good, Cosmic AI will not work properly. (Green: Best · Yellow: Medium · Red: Low)'}
           </div>
-
-          <div
-            data-testid="session-duration"
-            aria-label={`Session Duration ${formatSessionDuration(sessionDurationMs)}`}
-            title="Active voice session duration (auto-terminates at 40:00)"
-            className="flex flex-col items-end leading-tight sm:flex-row sm:items-center sm:gap-1.5"
-          >
-            <span className="text-[9px] tracking-wider text-slate-400/80 uppercase sm:text-[10px]">
-              Session Duration
-            </span>
-            <span
-              className={`font-mono text-[11px] tabular-nums sm:text-xs ${
-                isLive
-                  ? isBadmash
-                    ? 'text-purple-200/90'
-                    : 'text-sky-200/90'
-                  : 'text-slate-500'
-              }`}
-            >
-              {formatSessionDuration(sessionDurationMs)}
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setAdsModalOpen(true)}
-            data-testid="unity-ads-status-button"
-            aria-label="Unity Ads Status"
-            title="Unity Ads Status"
-            className="flex h-9 items-center gap-1.5 rounded-lg border border-white/15 bg-[#0d101b]/90 px-2.5 text-xs font-semibold text-slate-200 transition-colors hover:border-white/30 hover:text-white"
-          >
-            <Tv className="h-3.5 w-3.5 text-purple-300" />
-            <span>Ads</span>
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                unityAdsSnapshot?.rewardedState.phase === 'LOADED'
-                  ? 'bg-emerald-400'
-                  : unityAdsSnapshot?.sdkStatus.phase === 'FAILED' ||
-                      unityAdsSnapshot?.rewardedState.phase === 'FAILED'
-                    ? 'bg-red-400'
-                    : 'bg-amber-300'
-              }`}
-            />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setPrivacyModalOpen(true)}
-            data-testid="privacy-policy-button"
-            aria-label="Privacy Policy"
-            title="Privacy Policy"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
-          >
-            <ShieldCheck className="h-4 w-4 text-sky-400" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setResetViewSignal((n) => n + 1)}
-            aria-label="Reset camera view"
-            title="Reset Camera View"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
-          >
-            <RotateCcw className="h-4 w-4" />
-          </button>
         </div>
       </header>
 
@@ -571,18 +545,6 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Unity Ads Status Card Modal */}
-      <UnityAdsModal
-        open={adsModalOpen}
-        onClose={() => setAdsModalOpen(false)}
-        unityAdsSnapshot={unityAdsSnapshot}
-        lastAdRuleEvent={lastAdRuleEvent}
-        adElapsedActiveMs={adElapsedActiveMs}
-        hasNativeBridge={bridgeRuntime.hasNativeBridge}
-        onReloadRewardedAd={reloadRewardedAd}
-        onTestRewardedAd={triggerRewardedAdManually}
-      />
-
       {/* Privacy Policy Modal */}
       <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
 
@@ -609,6 +571,8 @@ export default function App() {
           unityAdsSnapshot={unityAdsSnapshot}
           lastAdRuleEvent={lastAdRuleEvent}
           adElapsedActiveMs={adElapsedActiveMs}
+          sessionDurationMs={sessionDurationMs}
+          sessionDurationState={sessionDurationState}
           bridgeRuntime={bridgeRuntime}
           backendUrl={backendUrl}
           transcripts={transcripts}

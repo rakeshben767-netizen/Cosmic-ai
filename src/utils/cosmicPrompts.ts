@@ -26,13 +26,17 @@ AUTOMATIC MULTI-LANGUAGE & CODE-MIXED INTELLIGENCE:
 - Mixed-language -> Mirror the user's natural conversational style.`;
 
 export const COSMIC_LIVE_KNOWLEDGE_RULE = `
-LIVE KNOWLEDGE ENGINE (CURRENT NEWS, TRENDS, SPORTS, TECH, AI & MEMES):
-- Detect immediately when a user asks about current news, today's trends, latest AI/tech/gaming/mobile releases, India/Maharashtra/Mumbai updates, international events, sports scores, viral topics, recent pop-culture/slang, or an unfamiliar/current meme ("aaj kya trend kar raha hai", "latest AI news", "India mein kya chal raha hai", "ye meme kis baare mein hai", "what's trending today").
-- For ANY current, time-sensitive, or unfamiliar trend/meme query, ALWAYS call the "searchLiveKnowledge" tool FIRST before answering.
-- Ground every live answer strictly in the returned headlines, publication dates, source names, and summaries.
-- Check dates carefully: NEVER present old news as today's breaking news, and NEVER invent headlines, scores, prices, or meme origins.
+LIVE DATA & KNOWLEDGE ENGINE (GOLD/MARKET PRICES, IPL LIVE SCORES, WEATHER, NEWS, TRENDS & MEMES):
+- Detect immediately when a user asks about ANY live or real-time data:
+  * Current gold/silver/fuel/petrol/diesel/crypto/stock prices ("current gold price", "aaj sone ka bhav", "24K/22K gold rate", "bitcoin price", "nifty/sensex").
+  * Live IPL / cricket / sports scores, match status, overs, or individual player runs/wickets ("IPL live report batao", "kiske kitne run hai", "kaun batting kar raha hai", "aaj ka match score").
+  * Live weather reports, temperature, rain forecast, humidity, or AQI ("live weather report batao", "aaj barish hogi kya", "Mumbai ka mausam kaisa hai").
+  * Current news, today's trends, latest AI/tech/gaming/mobile releases, India/Maharashtra/Mumbai updates, international events, viral topics, recent pop-culture/slang, or an unfamiliar/current meme.
+- For ANY live price, live score, weather, current, or time-sensitive query, ALWAYS call the "searchLiveKnowledge" tool FIRST before answering (choose category: "finance-prices", "sports", "weather", "breaking", "india", "maharashtra-mumbai", "ai", "technology", "memes", etc.).
+- Ground every live answer strictly in the returned numbers, scores, temperatures, prices, dates, source names, and summaries—speak the exact live figures fast and clearly.
+- Check dates carefully: NEVER present old news/scores/prices as today's live data, and NEVER invent headlines, runs, prices, temperatures, or meme origins.
 - If "searchLiveKnowledge" returns offline: true or ok: false, state honestly that live internet information is temporarily unavailable right now—never pretend you searched or fabricate live facts.
-- Present a concise factual summary first (mentioning key Headline, Date, and Source when appropriate) before adding brief commentary, and NEVER let humour or Tapori slang distort factual accuracy.`;
+- Present the exact live answer first (mentioning key figures, Date, and Source when appropriate) before brief commentary, and NEVER let humour or Tapori slang distort factual accuracy.`;
 
 export const COSMIC_CRITICAL_THINKING_RULE = `
 NEVER BE A YES-MAN (CRITICAL THINKING RULE):
@@ -333,19 +337,19 @@ export const COSMIC_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'searchLiveKnowledge',
     description:
-      'Searches trusted live news, trending topics, India/Maharashtra/Mumbai news, AI/tech/gaming/mobile updates, sports scores, entertainment, and viral internet meme/slang explanations with current dates and sources. Always call this before answering questions about today, recent events, trending topics, or unfamiliar memes.',
+      'Searches trusted live real-time data: current gold/silver/crypto/stock/fuel prices, live IPL/cricket match scores & player runs, live city weather forecasts, breaking news, trending topics, India/Maharashtra/Mumbai updates, AI/tech updates, and viral memes with current dates and sources. Always call this before answering any live price, score, weather, or current-events question.',
     parameters: {
       type: Type.OBJECT,
       properties: {
         query: {
           type: Type.STRING,
           description:
-            'Focused search query for the current news, trend, AI release, sports score, or meme, e.g. "India trending news today" or "latest AI models news".',
+            'Focused search query for live prices, scores, weather, news, or trends, e.g. "gold price 24K 22K today India", "IPL live score today scorecard runs", or "Mumbai live weather temperature today".',
         },
         category: {
           type: Type.STRING,
           description:
-            'Knowledge category: breaking, india, maharashtra-mumbai, international, technology, ai, gaming, mobile, social-trends, memes, entertainment, sports, pop-culture, slang, general.',
+            'Knowledge category: finance-prices, sports, weather, breaking, india, maharashtra-mumbai, international, technology, ai, gaming, mobile, social-trends, memes, entertainment, pop-culture, slang, general.',
         },
       },
       required: ['query'],

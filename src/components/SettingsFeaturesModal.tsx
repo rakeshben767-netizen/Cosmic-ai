@@ -32,6 +32,7 @@ import {
   MAX_SPEECH_RATE,
   MIN_SPEECH_RATE,
 } from '../utils/pcmAudio.ts';
+import type { PersistedSessionDurationState } from '../utils/sessionDuration.ts';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer.tsx';
 
 interface SettingsFeaturesModalProps {
@@ -46,6 +47,8 @@ interface SettingsFeaturesModalProps {
   unityAdsSnapshot: UnityAdsSnapshot | null;
   lastAdRuleEvent: RewardedAdRuleEvent | null;
   adElapsedActiveMs: number;
+  sessionDurationMs?: number;
+  sessionDurationState?: PersistedSessionDurationState;
   bridgeRuntime: { hasNativeBridge: boolean; runtimeLabel: string };
   backendUrl: string;
   transcripts: TranscriptEntry[];
@@ -123,13 +126,15 @@ const RAP_BATTLE_STYLES: Array<{ value: RapBattleStyle; label: string }> = [
 
 const SEARCH_CATEGORIES = [
   { value: 'breaking', label: 'Breaking' },
+  { value: 'finance-prices', label: 'Gold & Market Prices' },
+  { value: 'sports', label: 'IPL & Live Sports' },
+  { value: 'weather', label: 'Live Weather' },
   { value: 'india', label: 'India' },
   { value: 'maharashtra-mumbai', label: 'Maharashtra & Mumbai' },
   { value: 'ai', label: 'AI & Tech' },
   { value: 'gaming', label: 'Gaming' },
   { value: 'mobile', label: 'Android & Mobile' },
   { value: 'memes', label: 'Memes & Trends' },
-  { value: 'sports', label: 'Sports' },
   { value: 'entertainment', label: 'Movies & Music' },
 ];
 
@@ -145,6 +150,8 @@ export function SettingsFeaturesModal({
   unityAdsSnapshot,
   lastAdRuleEvent,
   adElapsedActiveMs,
+  sessionDurationMs,
+  sessionDurationState,
   bridgeRuntime,
   backendUrl,
   transcripts,
@@ -187,6 +194,8 @@ export function SettingsFeaturesModal({
           unityAdsSnapshot={unityAdsSnapshot}
           lastAdRuleEvent={lastAdRuleEvent}
           adElapsedActiveMs={adElapsedActiveMs}
+          sessionDurationMs={sessionDurationMs}
+          sessionDurationState={sessionDurationState}
           bridgeRuntime={bridgeRuntime}
           backendUrl={backendUrl}
           transcripts={transcripts}

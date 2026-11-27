@@ -1,9 +1,12 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildFocusedSearchQuery,
   checkKnowledgeRateLimit,
   clearKnowledgeCacheForTests,
   deduplicateAndScoreItems,
+  getCacheTtlForCategory,
+  inferKnowledgeCategoryFromQuery,
   normalizeKnowledgeCategory,
   parseGoogleNewsRss,
   searchLiveKnowledge,
@@ -34,11 +37,26 @@ describe('liveKnowledgeService', () => {
     clearKnowledgeCacheForTests();
   });
 
-  it('normalizes categories across India, Maharashtra/Mumbai, AI, Memes, and Sports', () => {
+  it('normalizes categories across India, Maharashtra/Mumbai, Gold/Finance, Weather, AI, Memes, and Sports', () => {
     assert.equal(normalizeKnowledgeCategory('Mumbai news'), 'maharashtra-mumbai');
     assert.equal(normalizeKnowledgeCategory('Artificial Intelligence'), 'ai');
     assert.equal(normalizeKnowledgeCategory('viral meme'), 'memes');
     assert.equal(normalizeKnowledgeCategory('cricket'), 'sports');
+    assert.equal(normalizeKnowledgeCategory('gold rate'), 'finance-prices');
+    assert.equal(normalizeKnowledgeCategory('live weather'), 'weather');
+    assert.equal(inferKnowledgeCategoryFromQuery('aaj gold price kitna hai', 'general'), 'finance-prices');
+    assert.equal(inferKnowledgeCategoryFromQuery('IPL live score runs', undefined), 'sports');
+    assert.equal(inferKnowledgeCategoryFromQuery('Mumbai ka mausam', 'general'), 'weather');
+  });
+
+  it('builds sharp queries and uses shorter 45s cache TTL for live prices, weather, and sports', () => {
+    assert.match(buildFocusedSearchQuery('gold price', 'finance-prices'), /rate today India/i);
+    assert.match(buildFocusedSearchQuery('IPL match', 'sports'), /live score scorecard/i);
+    assert.match(buildFocusedSearchQuery('Mumbai', 'weather'), /live weather today/i);
+    assert.equal(getCacheTtlForCategory('sports'), 45_000);
+    assert.equal(getCacheTtlForCategory('weather'), 45_000);
+    assert.equal(getCacheTtlForCategory('finance-prices'), 45_000);
+    assert.equal(getCacheTtlForCategory('india'), 300_000);
   });
 
   it('parses RSS, removes near-duplicate headlines, boosts corroborated source count, and caches results', async () => {

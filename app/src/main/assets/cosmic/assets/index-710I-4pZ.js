@@ -11992,23 +11992,6 @@ var Trash2 = createLucideIcon("trash-2", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
-var Tv = createLucideIcon("tv", [["path", {
-	d: "m17 2-5 5-5-5",
-	key: "16satq"
-}], ["rect", {
-	width: "20",
-	height: "15",
-	x: "2",
-	y: "7",
-	rx: "2",
-	key: "1e6viu"
-}]]);
-/**
-* @license lucide-react v0.546.0 - ISC
-*
-* This source code is licensed under the ISC license.
-* See the LICENSE file in the root directory of this source tree.
-*/
 var Volume2 = createLucideIcon("volume-2", [
 	["path", {
 		d: "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z",
@@ -45385,6 +45368,100 @@ function downloadSessionTranscriptTxt(session) {
 		return false;
 	}
 }
+// src/utils/sessionDuration.ts
+var MAX_SESSION_DURATION_MS = 24e5;
+var SESSION_DURATION_STORAGE_KEY = "cosmic_session_duration_state_v1";
+function createDefaultSessionDurationState(nowMs = Date.now()) {
+	return {
+		activeSessionId: null,
+		activeStartedAt: null,
+		activeElapsedMs: 0,
+		totalLifetimeMs: 0,
+		history: [],
+		updatedAt: nowMs
+	};
+}
+function formatSessionDuration(durationMs) {
+	const totalSeconds = Math.floor((Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0) / 1e3);
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+function evaluateSessionElapsed(startedAtMs, nowMs) {
+	if (startedAtMs === null || !Number.isFinite(startedAtMs) || nowMs <= startedAtMs) return {
+		elapsedMs: 0,
+		shouldTerminate: false
+	};
+	const elapsedMs = nowMs - startedAtMs;
+	if (elapsedMs >= 24e5) return {
+		elapsedMs: 0,
+		shouldTerminate: true
+	};
+	return {
+		elapsedMs,
+		shouldTerminate: false
+	};
+}
+function sanitizePersistedSessionDurationState(raw, nowMs = Date.now()) {
+	if (!raw || typeof raw !== "object") return createDefaultSessionDurationState(nowMs);
+	const candidate = raw;
+	const activeElapsedMs = typeof candidate.activeElapsedMs === "number" && Number.isFinite(candidate.activeElapsedMs) && candidate.activeElapsedMs > 0 && candidate.activeElapsedMs < 24e5 ? Math.floor(candidate.activeElapsedMs) : 0;
+	const history = Array.isArray(candidate.history) ? candidate.history.filter((item) => Boolean(item) && typeof item.id === "string" && typeof item.startedAt === "number" && typeof item.endedAt === "number" && typeof item.durationMs === "number" && Number.isFinite(item.durationMs) && item.durationMs >= 0).slice(0, 30) : [];
+	const computedTotal = history.reduce((sum, item) => sum + item.durationMs, 0);
+	const totalLifetimeMs = typeof candidate.totalLifetimeMs === "number" && Number.isFinite(candidate.totalLifetimeMs) && candidate.totalLifetimeMs >= computedTotal ? Math.floor(candidate.totalLifetimeMs) : computedTotal;
+	return {
+		activeSessionId: typeof candidate.activeSessionId === "string" ? candidate.activeSessionId : null,
+		activeStartedAt: typeof candidate.activeStartedAt === "number" && Number.isFinite(candidate.activeStartedAt) ? candidate.activeStartedAt : null,
+		activeElapsedMs,
+		totalLifetimeMs,
+		history,
+		updatedAt: typeof candidate.updatedAt === "number" && Number.isFinite(candidate.updatedAt) ? candidate.updatedAt : nowMs
+	};
+}
+function loadPersistedSessionDurationState() {
+	if (typeof window === "undefined") return createDefaultSessionDurationState();
+	try {
+		const raw = window.localStorage.getItem(SESSION_DURATION_STORAGE_KEY);
+		if (!raw) return createDefaultSessionDurationState();
+		return sanitizePersistedSessionDurationState(JSON.parse(raw));
+	} catch {
+		return createDefaultSessionDurationState();
+	}
+}
+function savePersistedSessionDurationState(state) {
+	const sanitized = sanitizePersistedSessionDurationState(state, state.updatedAt);
+	if (typeof window !== "undefined") try {
+		window.localStorage.setItem(SESSION_DURATION_STORAGE_KEY, JSON.stringify(sanitized));
+	} catch {}
+	return sanitized;
+}
+/**
+* Upserts the ongoing/ended session duration entry into persistent history and updates
+* cumulative lifetime duration without double-counting when called repeatedly on ticks.
+*/
+function upsertSessionDurationProgress(prev, params) {
+	const safeSegmentMs = Math.max(0, Math.floor(params.segmentDurationMs));
+	const safeCycleMs = params.reason === "limit_40m" ? 0 : Math.max(0, Math.min(2399999, Math.floor(params.cycleElapsedMs)));
+	const existingIndex = prev.history.findIndex((item) => item.id === params.sessionId);
+	const previousRecordedMs = existingIndex >= 0 ? prev.history[existingIndex].durationMs : 0;
+	const deltaMs = Math.max(0, safeSegmentMs - previousRecordedMs);
+	const updatedEntry = {
+		id: params.sessionId,
+		startedAt: params.startedAt,
+		endedAt: params.nowMs,
+		durationMs: safeSegmentMs,
+		reason: params.reason
+	};
+	const nextHistory = existingIndex >= 0 ? prev.history.map((item, idx) => idx === existingIndex ? updatedEntry : item) : [updatedEntry, ...prev.history].slice(0, 30);
+	return {
+		activeSessionId: params.reason === "limit_40m" ? null : params.sessionId,
+		activeStartedAt: params.reason === "limit_40m" ? null : params.startedAt,
+		activeElapsedMs: safeCycleMs,
+		totalLifetimeMs: prev.totalLifetimeMs + deltaMs,
+		history: nextHistory,
+		updatedAt: params.nowMs
+	};
+}
 // src/components/UnityAdsStatusCard.tsx
 function UnityAdsStatusCard({ unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs = 0, hasNativeBridge, onReloadRewardedAd, onTestRewardedAd }) {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -45534,7 +45611,7 @@ function UnityAdsStatusCard({ unityAdsSnapshot, lastAdRuleEvent, adElapsedActive
 	});
 }
 // src/components/DiagnosticsDrawer.tsx
-function DiagnosticsDrawer({ open, onClose, mode, diagnostics, speakerTestResult, unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs = 0, bridgeRuntime, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, onTestSpeaker, onRunSafeAction, onUpdateBackendUrl, onClearRecentSessions, onReloadRewardedAd }) {
+function DiagnosticsDrawer({ open, onClose, mode, diagnostics, speakerTestResult, unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs = 0, sessionDurationMs = 0, sessionDurationState, bridgeRuntime, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, onTestSpeaker, onRunSafeAction, onUpdateBackendUrl, onClearRecentSessions, onReloadRewardedAd }) {
 	const [activeTab, setActiveTab] = (0, import_react.useState)("audio");
 	const [customUrl, setCustomUrl] = (0, import_react.useState)("https://www.wikipedia.org");
 	const [customPhone, setCustomPhone] = (0, import_react.useState)("+919876543210");
@@ -45717,6 +45794,27 @@ function DiagnosticsDrawer({ open, onClose, mode, diagnostics, speakerTestResult
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
 										className: "text-right text-slate-100",
 										children: diagnostics.backendLatencyMs !== null ? `${diagnostics.backendLatencyMs}ms` : "—"
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+										className: "text-slate-400",
+										children: "Bg Session Cycle (40m)"
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dd", {
+										className: "text-right text-sky-300",
+										children: [formatSessionDuration(sessionDurationMs), " / 40:00"]
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+										className: "text-slate-400",
+										children: "Total Lifetime Usage"
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dd", {
+										className: "text-right text-emerald-300",
+										children: [
+											formatSessionDuration(sessionDurationState?.totalLifetimeMs ?? 0),
+											" (",
+											sessionDurationState?.history.length ?? 0,
+											" logs)"
+										]
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
 										className: "text-slate-400",
@@ -46231,6 +46329,18 @@ var SEARCH_CATEGORIES = [
 		label: "Breaking"
 	},
 	{
+		value: "finance-prices",
+		label: "Gold & Market Prices"
+	},
+	{
+		value: "sports",
+		label: "IPL & Live Sports"
+	},
+	{
+		value: "weather",
+		label: "Live Weather"
+	},
+	{
 		value: "india",
 		label: "India"
 	},
@@ -46255,15 +46365,11 @@ var SEARCH_CATEGORIES = [
 		label: "Memes & Trends"
 	},
 	{
-		value: "sports",
-		label: "Sports"
-	},
-	{
 		value: "entertainment",
 		label: "Movies & Music"
 	}
 ];
-function SettingsFeaturesModal({ open, onClose, mode, cosmicState, features, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs, bridgeRuntime, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, onUpdateFeatures, onSearchKnowledge, onTestSpeaker, onRunSafeAction, onUpdateBackendUrl, onClearRecentSessions, onReloadRewardedAd }) {
+function SettingsFeaturesModal({ open, onClose, mode, cosmicState, features, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs, sessionDurationMs, sessionDurationState, bridgeRuntime, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, onUpdateFeatures, onSearchKnowledge, onTestSpeaker, onRunSafeAction, onUpdateBackendUrl, onClearRecentSessions, onReloadRewardedAd }) {
 	const [section, setSection] = (0, import_react.useState)("features");
 	const [searchQuery, setSearchQuery] = (0, import_react.useState)("");
 	const [searchCategory, setSearchCategory] = (0, import_react.useState)("india");
@@ -46288,6 +46394,8 @@ function SettingsFeaturesModal({ open, onClose, mode, cosmicState, features, dia
 			unityAdsSnapshot,
 			lastAdRuleEvent,
 			adElapsedActiveMs,
+			sessionDurationMs,
+			sessionDurationState,
 			bridgeRuntime,
 			backendUrl,
 			transcripts,
@@ -46632,43 +46740,6 @@ function SettingsFeaturesModal({ open, onClose, mode, cosmicState, features, dia
 					})]
 				})
 			]
-		})
-	});
-}
-// src/components/UnityAdsModal.tsx
-function UnityAdsModal({ open, onClose, unityAdsSnapshot, lastAdRuleEvent, adElapsedActiveMs, hasNativeBridge, onReloadRewardedAd, onTestRewardedAd }) {
-	if (!open) return null;
-	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-		className: "fixed inset-0 z-40 flex items-center justify-center bg-black/65 p-4",
-		role: "dialog",
-		"aria-modal": "true",
-		"aria-label": "Unity Ads Status",
-		"data-testid": "unity-ads-modal",
-		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: "w-full max-w-md rounded-2xl border border-white/15 bg-[#0d101b] p-4 shadow-2xl",
-			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "mb-3 flex items-center justify-between",
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-center gap-2",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tv, { className: "h-4 w-4 text-sky-400" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
-						className: "font-display text-sm font-bold tracking-wide text-white",
-						children: "Unity Ads Status"
-					})]
-				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-					type: "button",
-					onClick: onClose,
-					"aria-label": "Close Unity Ads Status",
-					className: "flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white",
-					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { className: "h-4 w-4" })
-				})]
-			}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UnityAdsStatusCard, {
-				unityAdsSnapshot,
-				lastAdRuleEvent,
-				adElapsedActiveMs,
-				hasNativeBridge,
-				onReloadRewardedAd,
-				onTestRewardedAd
-			})]
 		})
 	});
 }
@@ -47563,27 +47634,6 @@ async function probeVoiceBackendHealth(healthUrl, timeoutMs = 5500, fetchFn = fe
 		clearTimeout(timer);
 	}
 }
-function formatSessionDuration(durationMs) {
-	const totalSeconds = Math.floor((Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0) / 1e3);
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-	return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-function evaluateSessionElapsed(startedAtMs, nowMs) {
-	if (startedAtMs === null || !Number.isFinite(startedAtMs) || nowMs <= startedAtMs) return {
-		elapsedMs: 0,
-		shouldTerminate: false
-	};
-	const elapsedMs = nowMs - startedAtMs;
-	if (elapsedMs >= 24e5) return {
-		elapsedMs: 0,
-		shouldTerminate: true
-	};
-	return {
-		elapsedMs,
-		shouldTerminate: false
-	};
-}
 // src/hooks/useCosmicLive.ts
 var WORKLET_PROCESSOR_CODE = `
 class CosmicMicProcessor extends AudioWorkletProcessor {
@@ -47673,7 +47723,8 @@ function useCosmicLive() {
 	const [powerOnAdNotice, setPowerOnAdNotice] = (0, import_react.useState)(null);
 	const [lastAdRuleEvent, setLastAdRuleEvent] = (0, import_react.useState)(null);
 	const [adElapsedActiveMs, setAdElapsedActiveMs] = (0, import_react.useState)(0);
-	const [sessionDurationMs, setSessionDurationMs] = (0, import_react.useState)(0);
+	const [sessionDurationState, setSessionDurationState] = (0, import_react.useState)(() => loadPersistedSessionDurationState());
+	const [sessionDurationMs, setSessionDurationMs] = (0, import_react.useState)(() => loadPersistedSessionDurationState().activeElapsedMs);
 	const [diagnostics, setDiagnostics] = (0, import_react.useState)(() => ({
 		contextState: "uninitialized",
 		sampleRate: 0,
@@ -47699,9 +47750,12 @@ function useCosmicLive() {
 	const backendUrlRef = (0, import_react.useRef)(backendUrl);
 	const transcriptsRef = (0, import_react.useRef)(transcripts);
 	const recentSessionsRef = (0, import_react.useRef)(recentSessions);
+	const sessionDurationStateRef = (0, import_react.useRef)(sessionDurationState);
 	const activeSessionIdRef = (0, import_react.useRef)(null);
 	const activeSessionStartedAtRef = (0, import_react.useRef)(Date.now());
 	const activeVoiceSessionStartedAtRef = (0, import_react.useRef)(null);
+	const durationSegmentIdRef = (0, import_react.useRef)(null);
+	const durationSegmentStartedAtRef = (0, import_react.useRef)(null);
 	const audioLevelRef = (0, import_react.useRef)(0);
 	const audioCtxRef = (0, import_react.useRef)(null);
 	const badmashRoughnessShaperRef = (0, import_react.useRef)(null);
@@ -47766,6 +47820,29 @@ function useCosmicLive() {
 	(0, import_react.useEffect)(() => {
 		recentSessionsRef.current = recentSessions;
 	}, [recentSessions]);
+	(0, import_react.useEffect)(() => {
+		sessionDurationStateRef.current = sessionDurationState;
+	}, [sessionDurationState]);
+	const persistDurationCheckpoint = (0, import_react.useCallback)((reason) => {
+		const cycleAnchor = activeVoiceSessionStartedAtRef.current;
+		const segId = durationSegmentIdRef.current;
+		const segStart = durationSegmentStartedAtRef.current;
+		if (cycleAnchor === null || !segId || segStart === null) return;
+		const nowMs = Date.now();
+		const segmentDurationMs = Math.max(0, nowMs - segStart);
+		const cycleElapsedMs = reason === "limit_40m" ? MAX_SESSION_DURATION_MS : Math.max(0, nowMs - cycleAnchor);
+		const next = savePersistedSessionDurationState(upsertSessionDurationProgress(sessionDurationStateRef.current, {
+			sessionId: segId,
+			startedAt: segStart,
+			nowMs,
+			cycleElapsedMs,
+			segmentDurationMs,
+			reason
+		}));
+		sessionDurationStateRef.current = next;
+		setSessionDurationState(next);
+		setSessionDurationMs(next.activeElapsedMs);
+	}, []);
 	const addLog = (0, import_react.useCallback)((level, category, message) => {
 		const entry = {
 			id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -48121,8 +48198,10 @@ function useCosmicLive() {
 		if (!canRetry) {
 			userWantsLiveRef.current = false;
 			isSessionReadyRef.current = false;
+			persistDurationCheckpoint("user_disconnect");
 			activeVoiceSessionStartedAtRef.current = null;
-			setSessionDurationMs(0);
+			durationSegmentIdRef.current = null;
+			durationSegmentStartedAtRef.current = null;
 			clearReconnectTimers();
 			stopMicrophone();
 			const reasonText = formatConnectionFailureReason({
@@ -48161,6 +48240,7 @@ function useCosmicLive() {
 	}, [
 		addLog,
 		clearReconnectTimers,
+		persistDurationCheckpoint,
 		stopMicrophone
 	]);
 	const handleServerMessage = (0, import_react.useCallback)(async (raw) => {
@@ -48187,8 +48267,12 @@ function useCosmicLive() {
 			retryCountRef.current = 0;
 			lastHealthErrorRef.current = null;
 			if (activeVoiceSessionStartedAtRef.current === null) {
-				activeVoiceSessionStartedAtRef.current = Date.now();
-				setSessionDurationMs(0);
+				const now = Date.now();
+				const resumedElapsedMs = sessionDurationStateRef.current.activeElapsedMs;
+				activeVoiceSessionStartedAtRef.current = now - resumedElapsedMs;
+				durationSegmentIdRef.current = `dur_${now}_${Math.random().toString(36).slice(2, 6)}`;
+				durationSegmentStartedAtRef.current = now;
+				setSessionDurationMs(resumedElapsedMs);
 			}
 			if (handshakeTimerRef.current !== null) {
 				clearTimeout(handshakeTimerRef.current);
@@ -48391,8 +48475,10 @@ function useCosmicLive() {
 		retryCountRef.current = 0;
 		resumeHandleRef.current = null;
 		activeSessionIdRef.current = null;
+		persistDurationCheckpoint("user_disconnect");
 		activeVoiceSessionStartedAtRef.current = null;
-		setSessionDurationMs(0);
+		durationSegmentIdRef.current = null;
+		durationSegmentStartedAtRef.current = null;
 		clearReconnectTimers();
 		clearAudioQueue("user-disconnect");
 		stopMicrophone();
@@ -48419,6 +48505,7 @@ function useCosmicLive() {
 		addLog,
 		clearAudioQueue,
 		clearReconnectTimers,
+		persistDurationCheckpoint,
 		stopMicrophone
 	]);
 	const executeConnectAttempt = (0, import_react.useCallback)(async (isRetry) => {
@@ -48992,29 +49079,45 @@ function useCosmicLive() {
 		};
 	}, [dispatchRewardedAdTrigger, handleAdResolution]);
 	(0, import_react.useEffect)(() => {
-		if (cosmicState === "IDLE" || cosmicState === "ERROR") {
-			activeVoiceSessionStartedAtRef.current = null;
-			setSessionDurationMs(0);
-			return;
-		}
+		if (cosmicState === "IDLE" || cosmicState === "ERROR") return;
+		let tickCount = 0;
 		const tickDuration = () => {
 			const { elapsedMs, shouldTerminate } = evaluateSessionElapsed(activeVoiceSessionStartedAtRef.current, Date.now());
 			if (shouldTerminate) {
 				addLog("info", "gemini", "Active voice session reached 40-minute limit; terminating connection and resetting session duration.");
+				persistDurationCheckpoint("limit_40m");
+				activeVoiceSessionStartedAtRef.current = null;
+				durationSegmentIdRef.current = null;
+				durationSegmentStartedAtRef.current = null;
 				disconnect();
 				return;
 			}
 			setSessionDurationMs(elapsedMs);
+			tickCount += 1;
+			if (tickCount % 2 === 0) persistDurationCheckpoint("active");
+		};
+		const flushOnAppCut = () => {
+			persistDurationCheckpoint("active");
+		};
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === "hidden") persistDurationCheckpoint("active");
 		};
 		tickDuration();
 		const timerId = window.setInterval(tickDuration, 1e3);
+		window.addEventListener("pagehide", flushOnAppCut);
+		window.addEventListener("beforeunload", flushOnAppCut);
+		document.addEventListener("visibilitychange", handleVisibilityChange);
 		return () => {
 			window.clearInterval(timerId);
+			window.removeEventListener("pagehide", flushOnAppCut);
+			window.removeEventListener("beforeunload", flushOnAppCut);
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
 		};
 	}, [
 		addLog,
 		cosmicState,
-		disconnect
+		disconnect,
+		persistDurationCheckpoint
 	]);
 	const reloadRewardedAd = (0, import_react.useCallback)(async () => {
 		const bridge = getCosmicNativeBridge();
@@ -49049,6 +49152,7 @@ function useCosmicLive() {
 		lastAdRuleEvent,
 		adElapsedActiveMs,
 		sessionDurationMs,
+		sessionDurationState,
 		bridgeRuntime: bridgeEnv.current,
 		audioLevelRef,
 		togglePower,
@@ -49080,6 +49184,7 @@ function classifyLatency(latencyMs, isLive = true) {
 	if (!isLive || typeof latencyMs !== "number" || !Number.isFinite(latencyMs) || latencyMs < 0) return {
 		tier: "idle",
 		label: "-- ms",
+		meaning: "Standby",
 		dotClass: "bg-slate-600",
 		textClass: "text-slate-500"
 	};
@@ -49087,28 +49192,30 @@ function classifyLatency(latencyMs, isLive = true) {
 	if (rounded < 150) return {
 		tier: "good",
 		label: `${rounded}ms`,
+		meaning: "Best Net",
 		dotClass: "bg-emerald-400",
 		textClass: "text-emerald-300"
 	};
 	if (rounded <= 350) return {
 		tier: "moderate",
 		label: `${rounded}ms`,
-		dotClass: "bg-amber-300",
-		textClass: "text-amber-300"
+		meaning: "Medium",
+		dotClass: "bg-yellow-400",
+		textClass: "text-yellow-300"
 	};
 	return {
 		tier: "high",
 		label: `${rounded}ms`,
-		dotClass: "bg-red-400",
+		meaning: "Low",
+		dotClass: "bg-red-500",
 		textClass: "text-red-300"
 	};
 }
 // src/App.tsx
 function App() {
-	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingPowerOnUnlock, powerOnAdNotice, lastAdRuleEvent, adElapsedActiveMs, sessionDurationMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, triggerRewardedAdManually, clearAdSnackbar, clearPowerOnAdNotice, clearError, clearMicNotice } = useCosmicLive();
+	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingPowerOnUnlock, powerOnAdNotice, lastAdRuleEvent, adElapsedActiveMs, sessionDurationMs, sessionDurationState, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, clearAdSnackbar, clearPowerOnAdNotice, clearError, clearMicNotice } = useCosmicLive();
 	const [resetViewSignal, setResetViewSignal] = (0, import_react.useState)(0);
 	const [privacyModalOpen, setPrivacyModalOpen] = (0, import_react.useState)(false);
-	const [adsModalOpen, setAdsModalOpen] = (0, import_react.useState)(false);
 	const [adminDrawerRequested, setAdminDrawerRequested] = (0, import_react.useState)(false);
 	const [textDraft, setTextDraft] = (0, import_react.useState)("");
 	const brandTapTimesRef = (0, import_react.useRef)([]);
@@ -49159,107 +49266,95 @@ function App() {
 				resetViewSignal
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
-				className: "pointer-events-none fixed top-0 inset-x-0 z-20 flex items-center justify-between px-4 py-3 sm:px-6",
-				children: [
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-						type: "button",
-						onClick: handleHiddenBrandTap,
-						className: "font-display pointer-events-auto cursor-pointer text-sm font-bold tracking-[0.14em] text-white uppercase sm:text-base",
-						children: "COSMIC AI"
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "hidden items-center gap-2 font-mono text-xs text-slate-300 sm:flex",
-						children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: `font-semibold tracking-wider ${cosmicState === "ERROR" ? "text-red-400" : cosmicState === "RECONNECTING" || cosmicState === "CONNECTING" ? "text-amber-300" : cosmicState === "SPEAKING" ? isBadmash ? "text-fuchsia-300" : "text-sky-300" : cosmicState === "LISTENING" ? isBadmash ? "text-purple-300" : "text-sky-400" : "text-slate-400"}`,
-								"data-testid": "cosmic-state-label",
-								children: cosmicState
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-slate-600",
-								children: "·"
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-slate-200",
-								children: isBadmash ? "Cosmic Ball · Savage Mode" : "Cosmic Ball · Normal Mode"
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-slate-600",
-								children: "·"
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-slate-400",
-								children: isBadmash ? "Don Voice (Charon)" : "Voice (Zephyr)"
-							}),
-							isDeveloperVerified && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-slate-600",
-								children: "·"
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-emerald-300",
-								"data-testid": "respect-mode-label",
-								children: "Respect Mode"
-							})] })
-						]
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "pointer-events-auto flex items-center gap-2 sm:gap-3",
-						children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								"data-testid": "latency-indicator",
-								"aria-label": `Network Latency ${latencyStatus.label}`,
-								title: "Real-time WebSocket ping latency",
-								className: "flex items-center gap-1.5 font-mono text-[10px] tabular-nums sm:text-xs",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-1.5 w-1.5 shrink-0 rounded-full ${latencyStatus.dotClass}` }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: latencyStatus.textClass,
-									children: latencyStatus.label
-								})]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								"data-testid": "session-duration",
-								"aria-label": `Session Duration ${formatSessionDuration(sessionDurationMs)}`,
-								title: "Active voice session duration (auto-terminates at 40:00)",
-								className: "flex flex-col items-end leading-tight sm:flex-row sm:items-center sm:gap-1.5",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: "text-[9px] tracking-wider text-slate-400/80 uppercase sm:text-[10px]",
-									children: "Session Duration"
+				className: "pointer-events-none fixed top-0 inset-x-0 z-20 flex flex-col gap-1.5 px-4 pt-3 pb-2 sm:px-6",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-center justify-between gap-2",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							onClick: handleHiddenBrandTap,
+							className: "font-display pointer-events-auto cursor-pointer text-sm font-bold tracking-[0.14em] text-white uppercase sm:text-base",
+							children: "COSMIC AI"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "hidden items-center gap-2 font-mono text-xs text-slate-300 sm:flex",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: `font-semibold tracking-wider ${cosmicState === "ERROR" ? "text-red-400" : cosmicState === "RECONNECTING" || cosmicState === "CONNECTING" ? "text-amber-300" : cosmicState === "SPEAKING" ? isBadmash ? "text-fuchsia-300" : "text-sky-300" : cosmicState === "LISTENING" ? isBadmash ? "text-purple-300" : "text-sky-400" : "text-slate-400"}`,
+									"data-testid": "cosmic-state-label",
+									children: cosmicState
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "text-slate-600",
+									children: "·"
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "text-slate-200",
+									children: isBadmash ? "Cosmic Ball · Savage Mode" : "Cosmic Ball · Normal Mode"
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "text-slate-600",
+									children: "·"
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "text-slate-400",
+									children: isBadmash ? "Don Voice (Charon)" : "Voice (Zephyr)"
+								}),
+								isDeveloperVerified && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "text-slate-600",
+									children: "·"
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: `font-mono text-[11px] tabular-nums sm:text-xs ${isLive ? isBadmash ? "text-purple-200/90" : "text-sky-200/90" : "text-slate-500"}`,
-									children: formatSessionDuration(sessionDurationMs)
-								})]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-								type: "button",
-								onClick: () => setAdsModalOpen(true),
-								"data-testid": "unity-ads-status-button",
-								"aria-label": "Unity Ads Status",
-								title: "Unity Ads Status",
-								className: "flex h-9 items-center gap-1.5 rounded-lg border border-white/15 bg-[#0d101b]/90 px-2.5 text-xs font-semibold text-slate-200 transition-colors hover:border-white/30 hover:text-white",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tv, { className: "h-3.5 w-3.5 text-purple-300" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Ads" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-1.5 w-1.5 rounded-full ${unityAdsSnapshot?.rewardedState.phase === "LOADED" ? "bg-emerald-400" : unityAdsSnapshot?.sdkStatus.phase === "FAILED" || unityAdsSnapshot?.rewardedState.phase === "FAILED" ? "bg-red-400" : "bg-amber-300"}` })
-								]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-								type: "button",
-								onClick: () => setPrivacyModalOpen(true),
-								"data-testid": "privacy-policy-button",
-								"aria-label": "Privacy Policy",
-								title: "Privacy Policy",
-								className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
-								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ShieldCheck, { className: "h-4 w-4 text-sky-400" })
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-								type: "button",
-								onClick: () => setResetViewSignal((n) => n + 1),
-								"aria-label": "Reset camera view",
-								title: "Reset Camera View",
-								className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
-								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RotateCcw, { className: "h-4 w-4" })
-							})
-						]
+									className: "text-emerald-300",
+									"data-testid": "respect-mode-label",
+									children: "Respect Mode"
+								})] })
+							]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "pointer-events-auto flex items-center gap-2 sm:gap-3",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									"data-testid": "latency-indicator",
+									"aria-label": `Network Ping ${latencyStatus.label} (${latencyStatus.meaning})`,
+									title: "Network Ping: Green = Best Net (<150ms), Yellow = Medium (150-350ms), Red = Low (>350ms)",
+									className: "flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#0d101b]/80 px-2 py-1 font-mono text-[10px] tabular-nums sm:text-xs",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-2 w-2 shrink-0 rounded-full ${latencyStatus.dotClass}` }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+										className: latencyStatus.textClass,
+										children: [
+											latencyStatus.label,
+											" · ",
+											latencyStatus.meaning
+										]
+									})]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+									type: "button",
+									onClick: () => setPrivacyModalOpen(true),
+									"data-testid": "privacy-policy-button",
+									"aria-label": "Privacy Policy",
+									title: "Privacy Policy",
+									className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
+									children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ShieldCheck, { className: "h-4 w-4 text-sky-400" })
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+									type: "button",
+									onClick: () => setResetViewSignal((n) => n + 1),
+									"aria-label": "Reset camera view",
+									title: "Reset Camera View",
+									className: "flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#0d101b]/90 text-slate-300 transition-colors hover:border-white/30 hover:text-white",
+									children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RotateCcw, { className: "h-4 w-4" })
+								})
+							]
+						})
+					]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "flex justify-center",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						"data-testid": "network-quality-banner",
+						className: `rounded-lg border px-2.5 py-0.5 text-center text-[10px] leading-snug backdrop-blur-sm sm:text-[11px] ${diagnostics.networkStatus === "offline" || latencyStatus.tier === "high" ? "border-red-500/45 bg-[#1a0d12]/85 font-medium text-red-300" : latencyStatus.tier === "moderate" ? "border-yellow-400/35 bg-[#19160a]/80 text-yellow-200" : "border-white/8 bg-[#0b101d]/65 text-slate-400"}`,
+						children: diagnostics.networkStatus === "offline" || latencyStatus.tier === "high" ? "Weak network detected — Cosmic AI will not work properly without a good connection." : "If your network is not good, Cosmic AI will not work properly. (Green: Best · Yellow: Medium · Red: Low)"
 					})
-				]
+				})]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "pointer-events-none fixed inset-x-0 bottom-32 z-20 mx-auto flex w-[min(92vw,540px)] flex-col items-center gap-2 sm:bottom-24",
@@ -49486,16 +49581,6 @@ function App() {
 					]
 				})
 			}),
-			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(UnityAdsModal, {
-				open: adsModalOpen,
-				onClose: () => setAdsModalOpen(false),
-				unityAdsSnapshot,
-				lastAdRuleEvent,
-				adElapsedActiveMs,
-				hasNativeBridge: bridgeRuntime.hasNativeBridge,
-				onReloadRewardedAd: reloadRewardedAd,
-				onTestRewardedAd: triggerRewardedAdManually
-			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrivacyPolicyModal, {
 				open: privacyModalOpen,
 				onClose: () => setPrivacyModalOpen(false)
@@ -49520,6 +49605,8 @@ function App() {
 				unityAdsSnapshot,
 				lastAdRuleEvent,
 				adElapsedActiveMs,
+				sessionDurationMs,
+				sessionDurationState,
 				bridgeRuntime,
 				backendUrl,
 				transcripts,

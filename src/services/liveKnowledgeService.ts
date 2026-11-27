@@ -14,6 +14,8 @@ export const KNOWLEDGE_CATEGORIES = [
   'memes',
   'entertainment',
   'sports',
+  'weather',
+  'finance-prices',
   'pop-culture',
   'slang',
   'general',
@@ -31,10 +33,11 @@ interface RateBucket {
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const VOLATILE_LIVE_CACHE_TTL_MS = 45 * 1000;
 const MAX_CACHE_ENTRIES = 100;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 24;
-const SEARCH_TIMEOUT_MS = 7500;
+const SEARCH_TIMEOUT_MS = 11000;
 
 const knowledgeCache = new Map<string, CacheEntry>();
 const rateLimitBuckets = new Map<string, RateBucket>();
@@ -63,6 +66,15 @@ export function normalizeKnowledgeCategory(raw?: string): KnowledgeCategory {
   const direct = KNOWLEDGE_CATEGORIES.find((c) => c === cleaned);
   if (direct) return direct;
 
+  if (/weather|mausam|barish|rain|temperature|forecast|aqi|humidity|climate/.test(cleaned)) {
+    return 'weather';
+  }
+  if (/gold|silver|sona|chandi|price|rate|bullion|petrol|diesel|nifty|sensex|stock|share|crypto|bitcoin|btc|currency|usd|inr|finance/.test(cleaned)) {
+    return 'finance-prices';
+  }
+  if (/sport|cricket|ipl|score|run|wicket|football|match|bcci|tournament/.test(cleaned)) {
+    return 'sports';
+  }
   if (/mumbai|maharashtra|pune|marathi/.test(cleaned)) return 'maharashtra-mumbai';
   if (/india|bharat|national/.test(cleaned)) return 'india';
   if (/ai|artificial|llm|gemini|openai/.test(cleaned)) return 'ai';
@@ -72,11 +84,19 @@ export function normalizeKnowledgeCategory(raw?: string): KnowledgeCategory {
   if (/meme|viral/.test(cleaned)) return 'memes';
   if (/trend|social/.test(cleaned)) return 'social-trends';
   if (/movie|series|music|hip-?hop|bollywood|entertain/.test(cleaned)) return 'entertainment';
-  if (/sport|cricket|ipl|football/.test(cleaned)) return 'sports';
   if (/slang|lingo|expression/.test(cleaned)) return 'slang';
   if (/world|global|international/.test(cleaned)) return 'international';
   if (/break|latest|today/.test(cleaned)) return 'breaking';
   return 'general';
+}
+
+export function inferKnowledgeCategoryFromQuery(
+  rawQuery: string,
+  explicitCategory?: string,
+): KnowledgeCategory {
+  const normalizedExplicit = normalizeKnowledgeCategory(explicitCategory);
+  if (normalizedExplicit !== 'general') return normalizedExplicit;
+  return normalizeKnowledgeCategory(rawQuery);
 }
 
 export function buildFocusedSearchQuery(rawQuery: string, category: KnowledgeCategory): string {
@@ -92,10 +112,37 @@ export function buildFocusedSearchQuery(rawQuery: string, category: KnowledgeCat
     if (category === 'ai') return 'latest artificial intelligence news today';
     if (category === 'technology') return 'latest technology news today';
     if (category === 'memes') return 'trending internet memes India today';
+    if (category === 'weather') return 'India live weather forecast today';
+    if (category === 'finance-prices') return 'gold silver rate India today';
+    if (category === 'sports') return 'IPL live cricket score scorecard today';
     return 'top trending news India world today';
   }
 
   const lower = clean.toLowerCase();
+  if (category === 'finance-prices') {
+    if (
+      /\b(gold|silver|sona|chandi|24k|22k)\b/.test(lower) &&
+      !/\b(india|mumbai|delhi|pune|hyderabad|chennai|kolkata|bangalore|today|aaj)\b/.test(lower)
+    ) {
+      return `${clean} rate today India`;
+    }
+    if (!/\b(today|live|rate|price|latest|aaj)\b/.test(lower)) {
+      return `${clean} live rate today`;
+    }
+    return clean;
+  }
+  if (category === 'weather') {
+    if (!/\b(weather|forecast|temperature|today|live|mausam)\b/.test(lower)) {
+      return `${clean} live weather today`;
+    }
+    return clean;
+  }
+  if (category === 'sports') {
+    if (/\b(ipl|cricket|match)\b/.test(lower) && !/\b(score|scorecard|live|runs)\b/.test(lower)) {
+      return `${clean} live score scorecard`;
+    }
+    return clean;
+  }
   if (category === 'maharashtra-mumbai' && !/mumbai|maharashtra/.test(lower)) {
     return `${clean} Mumbai Maharashtra`;
   }
@@ -269,6 +316,19 @@ async function fetchGoogleNewsFeed(
   return parseGoogleNewsRss(xml, focusedQuery);
 }
 
+function getCategoryPrecisionHint(category: KnowledgeCategory): string {
+  if (category === 'finance-prices') {
+    return 'Extract exact live/latest numbers with units and currency (for gold/silver: 24K and 22K rate per 10 grams in INR in India/city; for stocks/crypto/fuel: exact current price, change, date, and source).';
+  }
+  if (category === 'sports') {
+    return 'Extract live match scorecard details: exact team scores (runs/wickets/overs), active or top batters with exact runs & balls faced, top bowlers with wickets, and match status or result.';
+  }
+  if (category === 'weather') {
+    return 'Extract exact live weather report for the requested city/region: current temperature in °C, feels-like, sky/rain condition, rain probability, humidity %, and wind.';
+  }
+  return 'Provide a brief, strictly factual 2-4 sentence summary highlighting key dates, exact figures, source names, and verified facts.';
+}
+
 async function fetchGeminiGroundedSearch(
   ai: GoogleGenAI,
   focusedQuery: string,
@@ -278,11 +338,21 @@ async function fetchGeminiGroundedSearch(
   summaryText: string;
   groundedItems: LiveKnowledgeItem[];
 } | null> {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const istTime = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    dateStyle: 'full',
+    timeStyle: 'short',
+  }).format(now);
+  const precisionHint = getCategoryPrecisionHint(category);
+
   const response = await ai.models.generateContent({
     model: 'gemini-4-hydrogen',
-    contents: `Today is ${todayIso}. Search live web sources for accurate, up-to-date information on: "${focusedQuery}" (category: ${category}).
-Provide a brief, strictly factual 2-4 sentence summary highlighting key dates, source names, and verified facts. Never invent facts if recent data is missing.`,
+    contents: `Current reference date: ${todayIso} (${istTime} IST).
+Search live web sources for the latest verified real-time information on: "${focusedQuery}" (category: ${category}).
+${precisionHint}
+Never invent prices, scores, temperatures, or dates if live data could not be verified.`,
     config: {
       tools: [{ googleSearch: {} }],
       abortSignal: signal,
@@ -306,10 +376,10 @@ Provide a brief, strictly factual 2-4 sentence summary highlighting key dates, s
         headline: (web.title || hostSource).trim(),
         source: hostSource,
         url: web.uri,
-        publishedAt: new Date().toISOString(),
+        publishedAt: now.toISOString(),
         dateLabel: todayIso,
-        snippet: summaryText.slice(0, 200) || (web.title || hostSource),
-        relevanceScore: 0.88,
+        snippet: summaryText.slice(0, 220) || (web.title || hostSource),
+        relevanceScore: 0.92,
         corroboratedBy: 1,
       });
     }
@@ -323,12 +393,24 @@ export interface SearchLiveKnowledgeDeps {
   fetchRssFn?: (query: string, signal: AbortSignal) => Promise<LiveKnowledgeItem[]>;
 }
 
+export function getCacheTtlForCategory(category: KnowledgeCategory): number {
+  if (
+    category === 'sports' ||
+    category === 'weather' ||
+    category === 'finance-prices' ||
+    category === 'breaking'
+  ) {
+    return VOLATILE_LIVE_CACHE_TTL_MS;
+  }
+  return CACHE_TTL_MS;
+}
+
 export async function searchLiveKnowledge(
   rawQuery: string,
   rawCategory?: string,
   deps: SearchLiveKnowledgeDeps = {},
 ): Promise<LiveKnowledgeSearchResult> {
-  const category = normalizeKnowledgeCategory(rawCategory);
+  const category = inferKnowledgeCategoryFromQuery(rawQuery, rawCategory);
   const focusedQuery = buildFocusedSearchQuery(rawQuery, category);
   const cacheKey = `${category}::${focusedQuery.toLowerCase()}`;
   const now = Date.now();
@@ -396,18 +478,19 @@ export async function searchLiveKnowledge(
     };
   }
 
-  const fallbackSummary =
+  const headlinesSummary =
     deduped.length > 0
       ? deduped
           .slice(0, 3)
           .map((item) => `[${item.dateLabel}] ${item.headline} (${item.source})`)
           .join(' | ')
-      : groundedSummary;
+      : '';
 
-  const combinedSummary =
-    deduped.length > 0 && groundedSummary && !groundedSummary.includes(deduped[0].headline.slice(0, 20))
-      ? `${fallbackSummary} — Context: ${groundedSummary}`
-      : fallbackSummary || groundedSummary;
+  const combinedSummary = groundedSummary
+    ? headlinesSummary
+      ? `${groundedSummary} | Sources: ${headlinesSummary}`
+      : groundedSummary
+    : headlinesSummary;
 
   const result: LiveKnowledgeSearchResult = {
     ok: true,
@@ -430,7 +513,10 @@ export async function searchLiveKnowledge(
     const oldestKey = knowledgeCache.keys().next().value;
     if (oldestKey) knowledgeCache.delete(oldestKey);
   }
-  knowledgeCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+  knowledgeCache.set(cacheKey, {
+    expiresAt: now + getCacheTtlForCategory(category),
+    result,
+  });
 
   return result;
 }
