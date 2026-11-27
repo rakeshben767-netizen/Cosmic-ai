@@ -23,7 +23,7 @@ import {
   advanceActiveTime,
   createInitialAdTriggerState,
   evaluateAppLoadTrigger,
-  evaluateModeSwitchRequest,
+  evaluatePowerOnRequest,
   resolveRewardedAdOutcome,
   type AdTriggerState,
 } from '../utils/adTriggerEngine.ts';
@@ -222,7 +222,8 @@ export function useCosmicLive() {
   const [liveKnowledge, setLiveKnowledge] = useState<LiveKnowledgeSearchResult | null>(null);
   const [unityAdsSnapshot, setUnityAdsSnapshot] = useState<UnityAdsSnapshot | null>(null);
   const [adSnackbarMessage, setAdSnackbarMessage] = useState<string | null>(null);
-  const [pendingBadmashUnlock, setPendingBadmashUnlock] = useState<boolean>(false);
+  const [pendingPowerOnUnlock, setPendingPowerOnUnlock] = useState<boolean>(false);
+  const [powerOnAdNotice, setPowerOnAdNotice] = useState<string | null>(null);
   const [lastAdRuleEvent, setLastAdRuleEvent] = useState<RewardedAdRuleEvent | null>(null);
   const [adElapsedActiveMs, setAdElapsedActiveMs] = useState<number>(0);
   const [diagnostics, setDiagnostics] = useState<AudioDiagnosticsSnapshot>(() => ({
@@ -289,6 +290,7 @@ export function useCosmicLive() {
   const meterTimerRef = useRef<number | null>(null);
   const bridgeEnv = useRef(detectBridgeEnvironment());
   const adTriggerStateRef = useRef<AdTriggerState>(createInitialAdTriggerState());
+  const unityAdsSnapshotRef = useRef<UnityAdsSnapshot | null>(null);
   const adWatchdogTimerRef = useRef<number | null>(null);
   const snackbarTimerRef = useRef<number | null>(null);
 
@@ -1470,30 +1472,6 @@ export function useCosmicLive() {
     [appendTranscript, clearAudioQueue, ensureAudioContext],
   );
 
-  const togglePower = useCallback(async () => {
-    if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
-      await connect();
-    } else {
-      disconnect();
-    }
-  }, [connect, disconnect]);
-
-  const toggleMicMute = useCallback(async () => {
-    if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
-      await connect();
-      return;
-    }
-    if (!micStreamRef.current) {
-      await retryMicrophone();
-      return;
-    }
-    setIsMicMuted((prev) => {
-      const next = !prev;
-      addLog('info', 'mic', next ? 'Microphone muted.' : 'Microphone unmuted.');
-      return next;
-    });
-  }, [addLog, connect, retryMicrophone]);
-
   const setModeDirect = useCallback(
     (next: CosmicMode) => {
       if (modeRef.current === next) return;
@@ -1530,23 +1508,47 @@ export function useCosmicLive() {
         clearTimeout(adWatchdogTimerRef.current);
         adWatchdogTimerRef.current = null;
       }
+      const hasNativeBridge = Boolean(getCosmicNativeBridge()?.triggerRewardedAd);
       const { state: nextState, event } = resolveRewardedAdOutcome(
         adTriggerStateRef.current,
         trigger,
         outcome,
+        hasNativeBridge,
       );
       adTriggerStateRef.current = nextState;
-      setPendingBadmashUnlock(false);
+      setPendingPowerOnUnlock(false);
       setAdElapsedActiveMs(0);
       setLastAdRuleEvent(event);
 
       addLog('info', 'bridge', `Rewarded Ad rule event: ${JSON.stringify(event)}`);
 
-      if (event.grant_badmash_mode) {
-        setModeDirect('badmash');
+      if (trigger === 'power_on') {
+        if (event.grant_power_on) {
+          setPowerOnAdNotice(null);
+          void connect();
+        } else {
+          const snap = unityAdsSnapshotRef.current;
+          const rawErr =
+            snap?.rewardedState.rawErrorMessage || snap?.sdkStatus.rawErrorMessage;
+          const rawCode =
+            snap?.rewardedState.rawErrorCode || snap?.sdkStatus.rawErrorCode;
+          if (outcome === 'skipped') {
+            setPowerOnAdNotice(
+              'Ad skipped — watch the complete Rewarded Ad to Power On Cosmic AI.',
+            );
+          } else if (rawErr) {
+            setPowerOnAdNotice(
+              `Rewarded Ad failed (${rawCode ?? 'ERROR'}: ${rawErr}). Power On blocked until an ad loads.`,
+            );
+          } else {
+            setPowerOnAdNotice(
+              'Rewarded Ad is not loaded yet. Wait a few seconds and tap Power On again.',
+            );
+          }
+        }
       }
     },
-    [addLog, setModeDirect],
+    [addLog, connect],
   );
 
   const dispatchRewardedAdTrigger = useCallback(
@@ -1556,11 +1558,11 @@ export function useCosmicLive() {
         if (adWatchdogTimerRef.current !== null) {
           clearTimeout(adWatchdogTimerRef.current);
         }
-        // Safety fallback for mode_switch_badmash so the UI never gets stuck if native callback is delayed
-        if (trigger === 'mode_switch_badmash') {
+        // Watchdog cancels pending spinner if native callback doesn't return; NEVER grants Power On without ad completion
+        if (trigger === 'power_on') {
           adWatchdogTimerRef.current = window.setTimeout(() => {
-            if (adTriggerStateRef.current.pendingBadmashUnlock) {
-              handleAdResolution(trigger, 'fallback_no_fill_or_error');
+            if (adTriggerStateRef.current.pendingPowerOn) {
+              handleAdResolution('power_on', 'ad_not_loaded');
             }
           }, 15000);
         }
@@ -1572,20 +1574,44 @@ export function useCosmicLive() {
     [handleAdResolution],
   );
 
-  const toggleBadmashMode = useCallback(() => {
-    const evaluation = evaluateModeSwitchRequest(adTriggerStateRef.current, modeRef.current);
+  const requestPowerOnWithAd = useCallback(() => {
+    if (stateRef.current === 'CONNECTING') return;
+    const evaluation = evaluatePowerOnRequest(adTriggerStateRef.current);
     adTriggerStateRef.current = evaluation.state;
-
-    if (evaluation.action === 'switch_to_normal_immediately') {
-      setModeDirect('normal');
-      return;
-    }
-
     if (evaluation.action === 'trigger_rewarded_ad' && evaluation.trigger) {
-      setPendingBadmashUnlock(true);
+      setPendingPowerOnUnlock(true);
+      setPowerOnAdNotice(null);
       dispatchRewardedAdTrigger(evaluation.trigger);
     }
-  }, [dispatchRewardedAdTrigger, setModeDirect]);
+  }, [dispatchRewardedAdTrigger]);
+
+  const togglePower = useCallback(async () => {
+    if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
+      requestPowerOnWithAd();
+    } else {
+      disconnect();
+    }
+  }, [disconnect, requestPowerOnWithAd]);
+
+  const toggleMicMute = useCallback(async () => {
+    if (stateRef.current === 'IDLE' || stateRef.current === 'ERROR') {
+      requestPowerOnWithAd();
+      return;
+    }
+    if (!micStreamRef.current) {
+      await retryMicrophone();
+      return;
+    }
+    setIsMicMuted((prev) => {
+      const next = !prev;
+      addLog('info', 'mic', next ? 'Microphone muted.' : 'Microphone unmuted.');
+      return next;
+    });
+  }, [addLog, requestPowerOnWithAd, retryMicrophone]);
+
+  const toggleBadmashMode = useCallback(() => {
+    setModeDirect(modeRef.current === 'badmash' ? 'normal' : 'badmash');
+  }, [setModeDirect]);
 
   const updateFeatures = useCallback(
     (patch: Partial<CosmicFeaturesConfig>) => {
@@ -1923,11 +1949,12 @@ export function useCosmicLive() {
       __onCosmicUnityAdsRuleEvent?: (event: {
         trigger?: AdTriggerType;
         outcome?: AdResolutionOutcome;
-        grant_badmash_mode?: boolean;
+        grant_power_on?: boolean;
       }) => void;
     };
 
     win.__onCosmicUnityAdsState = (snapshot) => {
+      unityAdsSnapshotRef.current = snapshot;
       setUnityAdsSnapshot(snapshot);
     };
 
@@ -1944,17 +1971,19 @@ export function useCosmicLive() {
     win.__onCosmicUnityAdsRuleEvent = (raw) => {
       const trigger: AdTriggerType =
         raw.trigger === 'app_load' ||
-        raw.trigger === 'interval_5m' ||
-        raw.trigger === 'mode_switch_badmash'
+        raw.trigger === 'power_on' ||
+        raw.trigger === 'interval_4m'
           ? raw.trigger
-          : 'interval_5m';
+          : 'interval_4m';
       const outcome: AdResolutionOutcome =
         raw.outcome === 'completed' ||
         raw.outcome === 'skipped' ||
+        raw.outcome === 'ad_not_loaded' ||
+        raw.outcome === 'show_failed' ||
         raw.outcome === 'fallback_no_fill_or_error' ||
         raw.outcome === 'not_ready'
           ? raw.outcome
-          : raw.grant_badmash_mode
+          : raw.grant_power_on
             ? 'completed'
             : 'skipped';
       handleAdResolution(trigger, outcome);
@@ -1963,7 +1992,10 @@ export function useCosmicLive() {
     const bridge = getCosmicNativeBridge();
     if (bridge?.getUnityAdsState) {
       void bridge.getUnityAdsState().then((snapshot) => {
-        if (snapshot) setUnityAdsSnapshot(snapshot);
+        if (snapshot) {
+          unityAdsSnapshotRef.current = snapshot;
+          setUnityAdsSnapshot(snapshot);
+        }
       });
     }
 
@@ -1974,7 +2006,7 @@ export function useCosmicLive() {
       dispatchRewardedAdTrigger(appLoadEval.trigger);
     }
 
-    // Rule 2: 5-Minute Active Interval Trigger (Both Normal & Badmash Modes)
+    // Rule 2: 4-Minute Active Interval Trigger (Both Normal & Badmash Modes)
     const intervalId = window.setInterval(() => {
       const isVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
       const step = advanceActiveTime(adTriggerStateRef.current, 1000, isVisible);
@@ -2030,7 +2062,8 @@ export function useCosmicLive() {
     liveKnowledge,
     unityAdsSnapshot,
     adSnackbarMessage,
-    pendingBadmashUnlock,
+    pendingPowerOnUnlock,
+    powerOnAdNotice,
     lastAdRuleEvent,
     adElapsedActiveMs,
     bridgeRuntime: bridgeEnv.current,
@@ -2054,6 +2087,7 @@ export function useCosmicLive() {
     reloadRewardedAd,
     triggerRewardedAdManually: dispatchRewardedAdTrigger,
     clearAdSnackbar: () => setAdSnackbarMessage(null),
+    clearPowerOnAdNotice: () => setPowerOnAdNotice(null),
     clearError: () => setErrorMessage(null),
     clearMicNotice: () => setMicNotice(null),
   };

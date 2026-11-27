@@ -45405,7 +45405,7 @@ function UnityAdsStatusCard({ unityAdsSnapshot, lastAdRuleEvent, adElapsedActive
 						children: "Load Rewarded"
 					}), onTestRewardedAd && hasNativeBridge && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						type: "button",
-						onClick: () => onTestRewardedAd("interval_5m"),
+						onClick: () => onTestRewardedAd("interval_4m"),
 						className: "rounded border border-purple-400/35 bg-purple-500/15 px-2 py-0.5 text-[10px] font-semibold text-purple-200 hover:bg-purple-500/25",
 						children: "Show Rewarded"
 					})]
@@ -45453,11 +45453,11 @@ function UnityAdsStatusCard({ unityAdsSnapshot, lastAdRuleEvent, adElapsedActive
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
 						className: "text-slate-400",
-						children: "Active 5m Timer"
+						children: "Active 4m Timer"
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dd", {
 						className: "text-right text-sky-300",
-						children: [Math.floor(adElapsedActiveMs / 1e3), "s / 300s"]
+						children: [Math.floor(adElapsedActiveMs / 1e3), "s / 240s"]
 					})
 				]
 			}),
@@ -46745,14 +46745,14 @@ var DEFAULT_COSMIC_FEATURES = {
 	speechRate: 1
 };
 // src/utils/adTriggerEngine.ts
-var AD_INTERVAL_MS = 3e5;
+var AD_INTERVAL_MS = 24e4;
 function createInitialAdTriggerState() {
 	return {
 		appLoadTriggered: false,
 		elapsedActiveMs: 0,
 		isAdActive: false,
 		activeTrigger: null,
-		pendingBadmashUnlock: false,
+		pendingPowerOn: false,
 		lastEvent: null
 	};
 }
@@ -46778,15 +46778,15 @@ function advanceActiveTime(state, deltaMs, isVisible) {
 		shouldTriggerAd: false
 	};
 	const nextElapsed = state.elapsedActiveMs + deltaMs;
-	if (nextElapsed >= 3e5) return {
+	if (nextElapsed >= 24e4) return {
 		state: {
 			...state,
 			elapsedActiveMs: AD_INTERVAL_MS,
 			isAdActive: true,
-			activeTrigger: "interval_5m"
+			activeTrigger: "interval_4m"
 		},
 		shouldTriggerAd: true,
-		trigger: "interval_5m"
+		trigger: "interval_4m"
 	};
 	return {
 		state: {
@@ -46796,12 +46796,8 @@ function advanceActiveTime(state, deltaMs, isVisible) {
 		shouldTriggerAd: false
 	};
 }
-function evaluateModeSwitchRequest(state, currentMode) {
-	if (currentMode === "badmash") return {
-		state,
-		action: "switch_to_normal_immediately"
-	};
-	if (state.pendingBadmashUnlock) return {
+function evaluatePowerOnRequest(state) {
+	if (state.pendingPowerOn) return {
 		state,
 		action: "ignore_already_pending"
 	};
@@ -46809,19 +46805,20 @@ function evaluateModeSwitchRequest(state, currentMode) {
 		state: {
 			...state,
 			isAdActive: true,
-			activeTrigger: "mode_switch_badmash",
-			pendingBadmashUnlock: true
+			activeTrigger: "power_on",
+			pendingPowerOn: true
 		},
 		action: "trigger_rewarded_ad",
-		trigger: "mode_switch_badmash"
+		trigger: "power_on"
 	};
 }
-function resolveRewardedAdOutcome(state, trigger, outcome) {
+function resolveRewardedAdOutcome(state, trigger, outcome, hasNativeBridge = true) {
 	const event = {
 		ad_type: "rewarded",
 		trigger,
-		grant_badmash_mode: trigger === "mode_switch_badmash" && (outcome === "completed" || outcome === "fallback_no_fill_or_error" || outcome === "not_ready"),
-		next_interval_sec: 300
+		grant_power_on: trigger === "power_on" && (hasNativeBridge ? outcome === "completed" : outcome === "completed" || outcome === "fallback_no_fill_or_error"),
+		grant_badmash_mode: false,
+		next_interval_sec: 240
 	};
 	return {
 		state: {
@@ -46829,7 +46826,7 @@ function resolveRewardedAdOutcome(state, trigger, outcome) {
 			elapsedActiveMs: 0,
 			isAdActive: false,
 			activeTrigger: null,
-			pendingBadmashUnlock: false,
+			pendingPowerOn: false,
 			lastEvent: event
 		},
 		event
@@ -47651,7 +47648,8 @@ function useCosmicLive() {
 	const [liveKnowledge, setLiveKnowledge] = (0, import_react.useState)(null);
 	const [unityAdsSnapshot, setUnityAdsSnapshot] = (0, import_react.useState)(null);
 	const [adSnackbarMessage, setAdSnackbarMessage] = (0, import_react.useState)(null);
-	const [pendingBadmashUnlock, setPendingBadmashUnlock] = (0, import_react.useState)(false);
+	const [pendingPowerOnUnlock, setPendingPowerOnUnlock] = (0, import_react.useState)(false);
+	const [powerOnAdNotice, setPowerOnAdNotice] = (0, import_react.useState)(null);
 	const [lastAdRuleEvent, setLastAdRuleEvent] = (0, import_react.useState)(null);
 	const [adElapsedActiveMs, setAdElapsedActiveMs] = (0, import_react.useState)(0);
 	const [diagnostics, setDiagnostics] = (0, import_react.useState)(() => ({
@@ -47709,6 +47707,7 @@ function useCosmicLive() {
 	const meterTimerRef = (0, import_react.useRef)(null);
 	const bridgeEnv = (0, import_react.useRef)(detectBridgeEnvironment());
 	const adTriggerStateRef = (0, import_react.useRef)(createInitialAdTriggerState());
+	const unityAdsSnapshotRef = (0, import_react.useRef)(null);
 	const adWatchdogTimerRef = (0, import_react.useRef)(null);
 	const snackbarTimerRef = (0, import_react.useRef)(null);
 	(0, import_react.useEffect)(() => {
@@ -48580,29 +48579,6 @@ function useCosmicLive() {
 		clearAudioQueue,
 		ensureAudioContext
 	]);
-	const togglePower = (0, import_react.useCallback)(async () => {
-		if (stateRef.current === "IDLE" || stateRef.current === "ERROR") await connect();
-		else disconnect();
-	}, [connect, disconnect]);
-	const toggleMicMute = (0, import_react.useCallback)(async () => {
-		if (stateRef.current === "IDLE" || stateRef.current === "ERROR") {
-			await connect();
-			return;
-		}
-		if (!micStreamRef.current) {
-			await retryMicrophone();
-			return;
-		}
-		setIsMicMuted((prev) => {
-			const next = !prev;
-			addLog("info", "mic", next ? "Microphone muted." : "Microphone unmuted.");
-			return next;
-		});
-	}, [
-		addLog,
-		connect,
-		retryMicrophone
-	]);
 	const setModeDirect = (0, import_react.useCallback)((next) => {
 		if (modeRef.current === next) return;
 		setMode(next);
@@ -48623,36 +48599,73 @@ function useCosmicLive() {
 			clearTimeout(adWatchdogTimerRef.current);
 			adWatchdogTimerRef.current = null;
 		}
-		const { state: nextState, event } = resolveRewardedAdOutcome(adTriggerStateRef.current, trigger, outcome);
+		const hasNativeBridge = Boolean(getCosmicNativeBridge()?.triggerRewardedAd);
+		const { state: nextState, event } = resolveRewardedAdOutcome(adTriggerStateRef.current, trigger, outcome, hasNativeBridge);
 		adTriggerStateRef.current = nextState;
-		setPendingBadmashUnlock(false);
+		setPendingPowerOnUnlock(false);
 		setAdElapsedActiveMs(0);
 		setLastAdRuleEvent(event);
 		addLog("info", "bridge", `Rewarded Ad rule event: ${JSON.stringify(event)}`);
-		if (event.grant_badmash_mode) setModeDirect("badmash");
-	}, [addLog, setModeDirect]);
+		if (trigger === "power_on") {
+			if (event.grant_power_on) {
+				setPowerOnAdNotice(null);
+				connect();
+			} else {
+				const snap = unityAdsSnapshotRef.current;
+				const rawErr = snap?.rewardedState.rawErrorMessage || snap?.sdkStatus.rawErrorMessage;
+				const rawCode = snap?.rewardedState.rawErrorCode || snap?.sdkStatus.rawErrorCode;
+				if (outcome === "skipped") setPowerOnAdNotice("Ad skipped — watch the complete Rewarded Ad to Power On Cosmic AI.");
+				else if (rawErr) setPowerOnAdNotice(`Rewarded Ad failed (${rawCode ?? "ERROR"}: ${rawErr}). Power On blocked until an ad loads.`);
+				else setPowerOnAdNotice("Rewarded Ad is not loaded yet. Wait a few seconds and tap Power On again.");
+			}
+		}
+	}, [addLog, connect]);
 	const dispatchRewardedAdTrigger = (0, import_react.useCallback)((trigger) => {
 		const bridge = getCosmicNativeBridge();
 		if (bridge?.triggerRewardedAd) {
 			if (adWatchdogTimerRef.current !== null) clearTimeout(adWatchdogTimerRef.current);
-			if (trigger === "mode_switch_badmash") adWatchdogTimerRef.current = window.setTimeout(() => {
-				if (adTriggerStateRef.current.pendingBadmashUnlock) handleAdResolution(trigger, "fallback_no_fill_or_error");
+			if (trigger === "power_on") adWatchdogTimerRef.current = window.setTimeout(() => {
+				if (adTriggerStateRef.current.pendingPowerOn) handleAdResolution("power_on", "ad_not_loaded");
 			}, 15e3);
 			bridge.triggerRewardedAd(trigger);
 		} else handleAdResolution(trigger, "fallback_no_fill_or_error");
 	}, [handleAdResolution]);
-	const toggleBadmashMode = (0, import_react.useCallback)(() => {
-		const evaluation = evaluateModeSwitchRequest(adTriggerStateRef.current, modeRef.current);
+	const requestPowerOnWithAd = (0, import_react.useCallback)(() => {
+		if (stateRef.current === "CONNECTING") return;
+		const evaluation = evaluatePowerOnRequest(adTriggerStateRef.current);
 		adTriggerStateRef.current = evaluation.state;
-		if (evaluation.action === "switch_to_normal_immediately") {
-			setModeDirect("normal");
-			return;
-		}
 		if (evaluation.action === "trigger_rewarded_ad" && evaluation.trigger) {
-			setPendingBadmashUnlock(true);
+			setPendingPowerOnUnlock(true);
+			setPowerOnAdNotice(null);
 			dispatchRewardedAdTrigger(evaluation.trigger);
 		}
-	}, [dispatchRewardedAdTrigger, setModeDirect]);
+	}, [dispatchRewardedAdTrigger]);
+	const togglePower = (0, import_react.useCallback)(async () => {
+		if (stateRef.current === "IDLE" || stateRef.current === "ERROR") requestPowerOnWithAd();
+		else disconnect();
+	}, [disconnect, requestPowerOnWithAd]);
+	const toggleMicMute = (0, import_react.useCallback)(async () => {
+		if (stateRef.current === "IDLE" || stateRef.current === "ERROR") {
+			requestPowerOnWithAd();
+			return;
+		}
+		if (!micStreamRef.current) {
+			await retryMicrophone();
+			return;
+		}
+		setIsMicMuted((prev) => {
+			const next = !prev;
+			addLog("info", "mic", next ? "Microphone muted." : "Microphone unmuted.");
+			return next;
+		});
+	}, [
+		addLog,
+		requestPowerOnWithAd,
+		retryMicrophone
+	]);
+	const toggleBadmashMode = (0, import_react.useCallback)(() => {
+		setModeDirect(modeRef.current === "badmash" ? "normal" : "badmash");
+	}, [setModeDirect]);
 	const updateFeatures = (0, import_react.useCallback)((patch) => {
 		setFeatures((prev) => {
 			const sanitizedPatch = { ...patch };
@@ -48890,6 +48903,7 @@ function useCosmicLive() {
 	(0, import_react.useEffect)(() => {
 		const win = window;
 		win.__onCosmicUnityAdsState = (snapshot) => {
+			unityAdsSnapshotRef.current = snapshot;
 			setUnityAdsSnapshot(snapshot);
 		};
 		win.__onCosmicUnityAdsMessage = (message) => {
@@ -48900,13 +48914,16 @@ function useCosmicLive() {
 			}, 4500);
 		};
 		win.__onCosmicUnityAdsRuleEvent = (raw) => {
-			const trigger = raw.trigger === "app_load" || raw.trigger === "interval_5m" || raw.trigger === "mode_switch_badmash" ? raw.trigger : "interval_5m";
-			const outcome = raw.outcome === "completed" || raw.outcome === "skipped" || raw.outcome === "fallback_no_fill_or_error" || raw.outcome === "not_ready" ? raw.outcome : raw.grant_badmash_mode ? "completed" : "skipped";
+			const trigger = raw.trigger === "app_load" || raw.trigger === "power_on" || raw.trigger === "interval_4m" ? raw.trigger : "interval_4m";
+			const outcome = raw.outcome === "completed" || raw.outcome === "skipped" || raw.outcome === "ad_not_loaded" || raw.outcome === "show_failed" || raw.outcome === "fallback_no_fill_or_error" || raw.outcome === "not_ready" ? raw.outcome : raw.grant_power_on ? "completed" : "skipped";
 			handleAdResolution(trigger, outcome);
 		};
 		const bridge = getCosmicNativeBridge();
 		if (bridge?.getUnityAdsState) bridge.getUnityAdsState().then((snapshot) => {
-			if (snapshot) setUnityAdsSnapshot(snapshot);
+			if (snapshot) {
+				unityAdsSnapshotRef.current = snapshot;
+				setUnityAdsSnapshot(snapshot);
+			}
 		});
 		const appLoadEval = evaluateAppLoadTrigger(adTriggerStateRef.current);
 		adTriggerStateRef.current = appLoadEval.state;
@@ -48955,7 +48972,8 @@ function useCosmicLive() {
 		liveKnowledge,
 		unityAdsSnapshot,
 		adSnackbarMessage,
-		pendingBadmashUnlock,
+		pendingPowerOnUnlock,
+		powerOnAdNotice,
 		lastAdRuleEvent,
 		adElapsedActiveMs,
 		bridgeRuntime: bridgeEnv.current,
@@ -48979,13 +48997,14 @@ function useCosmicLive() {
 		reloadRewardedAd,
 		triggerRewardedAdManually: dispatchRewardedAdTrigger,
 		clearAdSnackbar: () => setAdSnackbarMessage(null),
+		clearPowerOnAdNotice: () => setPowerOnAdNotice(null),
 		clearError: () => setErrorMessage(null),
 		clearMicNotice: () => setMicNotice(null)
 	};
 }
 // src/App.tsx
 function App() {
-	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingBadmashUnlock, lastAdRuleEvent, adElapsedActiveMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, triggerRewardedAdManually, clearAdSnackbar, clearError, clearMicNotice } = useCosmicLive();
+	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingPowerOnUnlock, powerOnAdNotice, lastAdRuleEvent, adElapsedActiveMs, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, triggerRewardedAdManually, clearAdSnackbar, clearPowerOnAdNotice, clearError, clearMicNotice } = useCosmicLive();
 	const [resetViewSignal, setResetViewSignal] = (0, import_react.useState)(0);
 	const [privacyModalOpen, setPrivacyModalOpen] = (0, import_react.useState)(false);
 	const [adsModalOpen, setAdsModalOpen] = (0, import_react.useState)(false);
@@ -49143,6 +49162,28 @@ function App() {
 							children: "OK"
 						})]
 					}),
+					powerOnAdNotice && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						role: "alert",
+						"data-testid": "power-on-ad-notice",
+						className: "pointer-events-auto flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/45 bg-[#1b1409]/95 px-3 py-2 text-xs text-amber-100 shadow-lg",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "min-w-[160px] flex-1 break-words",
+							children: powerOnAdNotice
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex shrink-0 items-center gap-2",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => setAdsModalOpen(true),
+								className: "rounded-md border border-purple-400/50 bg-purple-500/20 px-2.5 py-1 font-semibold text-purple-100 hover:bg-purple-500/30",
+								children: "Ads Status"
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: clearPowerOnAdNotice,
+								className: "font-semibold text-amber-300 hover:text-white",
+								children: "OK"
+							})]
+						})]
+					}),
 					errorMessage && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						role: "alert",
 						className: "pointer-events-auto flex w-full items-center justify-between gap-2 rounded-xl border border-red-500/40 bg-[#1a0d12]/95 px-3 py-2 text-xs text-red-200 shadow-lg",
@@ -49293,14 +49334,17 @@ function App() {
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							type: "button",
+							disabled: pendingPowerOnUnlock,
 							onClick: () => void togglePower(),
-							className: `flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors ${isLive ? "border-sky-400/60 bg-sky-500/18 text-sky-100" : "border-white/15 bg-white/5 text-slate-200 hover:bg-white/10"}`,
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Power, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: isLive ? "Power Off" : "Power On" })]
+							"data-testid": "power-on-toggle",
+							className: `flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${isLive ? "border-sky-400/60 bg-sky-500/18 text-sky-100" : "border-white/15 bg-white/5 text-slate-200 hover:bg-white/10"}`,
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Power, { className: `h-3.5 w-3.5 ${pendingPowerOnUnlock ? "animate-pulse text-purple-300" : ""}` }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: isLive ? "Power Off" : pendingPowerOnUnlock ? "Loading Ad..." : "Power On" })]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							type: "button",
+							disabled: !isLive && pendingPowerOnUnlock,
 							onClick: () => void toggleMicMute(),
-							className: `flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors ${isLive && isMicMuted ? "border-amber-400/60 bg-amber-500/15 text-amber-200" : isLive ? "border-sky-400/50 bg-sky-500/15 text-sky-100" : "border-white/15 bg-white/5 text-slate-200 hover:bg-white/10"}`,
+							className: `flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${isLive && isMicMuted ? "border-amber-400/60 bg-amber-500/15 text-amber-200" : isLive ? "border-sky-400/50 bg-sky-500/15 text-sky-100" : "border-white/15 bg-white/5 text-slate-200 hover:bg-white/10"}`,
 							children: [isLive && isMicMuted ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MicOff, { className: "h-3.5 w-3.5" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Mic, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: isLive && isMicMuted ? "Muted" : "Speak" })]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(VoiceWaveform, {
@@ -49313,11 +49357,10 @@ function App() {
 							role: "switch",
 							"aria-checked": isBadmash,
 							"aria-label": isBadmash ? "Switch to Normal Mode" : "Switch to Badmash Mode",
-							disabled: pendingBadmashUnlock,
 							onClick: toggleBadmashMode,
 							"data-testid": "badmash-mode-toggle",
-							className: `flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold tracking-wide whitespace-nowrap transition-all disabled:opacity-70 ${isBadmash ? "border-purple-500/80 bg-purple-700/30 text-purple-100 shadow-[0_0_18px_rgba(168,85,247,0.45)]" : "border-sky-400/45 bg-sky-950/60 text-sky-100 hover:border-sky-300"}`,
-							children: isBadmash ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Flame, { className: "h-3.5 w-3.5 text-purple-300" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "BADMASH MODE" })] }) : pendingBadmashUnlock ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { className: "h-3.5 w-3.5 animate-pulse text-purple-300" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "UNLOCKING..." })] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { className: "h-3.5 w-3.5 text-sky-400" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "NORMAL MODE" })] })
+							className: `flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold tracking-wide whitespace-nowrap transition-all ${isBadmash ? "border-purple-500/80 bg-purple-700/30 text-purple-100 shadow-[0_0_18px_rgba(168,85,247,0.45)]" : "border-sky-400/45 bg-sky-950/60 text-sky-100 hover:border-sky-300"}`,
+							children: isBadmash ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Flame, { className: "h-3.5 w-3.5 text-purple-300" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "BADMASH MODE" })] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { className: "h-3.5 w-3.5 text-sky-400" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "NORMAL MODE" })] })
 						})
 					]
 				})

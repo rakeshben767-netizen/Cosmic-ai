@@ -1,19 +1,18 @@
 import type {
   AdResolutionOutcome,
   AdTriggerType,
-  CosmicMode,
   RewardedAdRuleEvent,
 } from '../types/cosmic.ts';
 
-export const AD_INTERVAL_MS = 300_000;
-export const AD_INTERVAL_SEC = 300 as const;
+export const AD_INTERVAL_MS = 240_000;
+export const AD_INTERVAL_SEC = 240 as const;
 
 export interface AdTriggerState {
   appLoadTriggered: boolean;
   elapsedActiveMs: number;
   isAdActive: boolean;
   activeTrigger: AdTriggerType | null;
-  pendingBadmashUnlock: boolean;
+  pendingPowerOn: boolean;
   lastEvent: RewardedAdRuleEvent | null;
 }
 
@@ -23,7 +22,7 @@ export function createInitialAdTriggerState(): AdTriggerState {
     elapsedActiveMs: 0,
     isAdActive: false,
     activeTrigger: null,
-    pendingBadmashUnlock: false,
+    pendingPowerOn: false,
     lastEvent: null,
   };
 }
@@ -55,7 +54,7 @@ export function advanceActiveTime(
 ): {
   state: AdTriggerState;
   shouldTriggerAd: boolean;
-  trigger?: 'interval_5m';
+  trigger?: 'interval_4m';
 } {
   if (!isVisible || state.isAdActive || deltaMs <= 0) {
     return { state, shouldTriggerAd: false };
@@ -68,10 +67,10 @@ export function advanceActiveTime(
         ...state,
         elapsedActiveMs: AD_INTERVAL_MS,
         isAdActive: true,
-        activeTrigger: 'interval_5m',
+        activeTrigger: 'interval_4m',
       },
       shouldTriggerAd: true,
-      trigger: 'interval_5m',
+      trigger: 'interval_4m',
     };
   }
 
@@ -84,22 +83,12 @@ export function advanceActiveTime(
   };
 }
 
-export function evaluateModeSwitchRequest(
-  state: AdTriggerState,
-  currentMode: CosmicMode,
-): {
+export function evaluatePowerOnRequest(state: AdTriggerState): {
   state: AdTriggerState;
-  action: 'switch_to_normal_immediately' | 'trigger_rewarded_ad' | 'ignore_already_pending';
-  trigger?: 'mode_switch_badmash';
+  action: 'trigger_rewarded_ad' | 'ignore_already_pending';
+  trigger?: 'power_on';
 } {
-  if (currentMode === 'badmash') {
-    return {
-      state,
-      action: 'switch_to_normal_immediately',
-    };
-  }
-
-  if (state.pendingBadmashUnlock) {
+  if (state.pendingPowerOn) {
     return {
       state,
       action: 'ignore_already_pending',
@@ -110,11 +99,11 @@ export function evaluateModeSwitchRequest(
     state: {
       ...state,
       isAdActive: true,
-      activeTrigger: 'mode_switch_badmash',
-      pendingBadmashUnlock: true,
+      activeTrigger: 'power_on',
+      pendingPowerOn: true,
     },
     action: 'trigger_rewarded_ad',
-    trigger: 'mode_switch_badmash',
+    trigger: 'power_on',
   };
 }
 
@@ -122,20 +111,25 @@ export function resolveRewardedAdOutcome(
   state: AdTriggerState,
   trigger: AdTriggerType,
   outcome: AdResolutionOutcome,
+  hasNativeBridge = true,
 ): {
   state: AdTriggerState;
   event: RewardedAdRuleEvent;
 } {
-  const grantBadmashMode =
-    trigger === 'mode_switch_badmash' &&
-    (outcome === 'completed' ||
-      outcome === 'fallback_no_fill_or_error' ||
-      outcome === 'not_ready');
+  // Strict rule on Android APK (hasNativeBridge=true):
+  // Power On is granted ONLY when the Rewarded Ad finishes with 'completed'.
+  // Never power on when ad is not loaded, fails to load, fails to show, or is skipped.
+  const grantPowerOn =
+    trigger === 'power_on' &&
+    (hasNativeBridge
+      ? outcome === 'completed'
+      : outcome === 'completed' || outcome === 'fallback_no_fill_or_error');
 
   const event: RewardedAdRuleEvent = {
     ad_type: 'rewarded',
     trigger,
-    grant_badmash_mode: grantBadmashMode,
+    grant_power_on: grantPowerOn,
+    grant_badmash_mode: false,
     next_interval_sec: AD_INTERVAL_SEC,
   };
 
@@ -145,7 +139,7 @@ export function resolveRewardedAdOutcome(
       elapsedActiveMs: 0,
       isAdActive: false,
       activeTrigger: null,
-      pendingBadmashUnlock: false,
+      pendingPowerOn: false,
       lastEvent: event,
     },
     event,

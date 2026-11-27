@@ -62,14 +62,16 @@ data class AdCounters(
 data class AdRuleEvent(
     val adType: String = "rewarded",
     val trigger: String,
-    val grantBadmashMode: Boolean,
-    val nextIntervalSec: Int = 300,
+    val grantPowerOn: Boolean,
+    val grantBadmashMode: Boolean = false,
+    val nextIntervalSec: Int = 240,
     val outcome: String
 ) {
     fun toJson(): JSONObject {
         return JSONObject().apply {
             put("ad_type", adType)
             put("trigger", trigger)
+            put("grant_power_on", grantPowerOn)
             put("grant_badmash_mode", grantBadmashMode)
             put("next_interval_sec", nextIntervalSec)
             put("outcome", outcome)
@@ -78,8 +80,10 @@ data class AdRuleEvent(
 }
 
 object UnityAdsManager {
-    private const val RETRY_LOAD_DELAY_MS = 5_000L
-    private const val MODE_SWITCH_WAIT_TIMEOUT_MS = 3_000L
+    private const val RETRY_DELAY_MS = 5_000L
+    private const val POWER_ON_WAIT_TIMEOUT_MS = 6_000L
+    private const val APP_LOAD_WAIT_TIMEOUT_MS = 12_000L
+    private const val INTERVAL_SEC = 240
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -108,9 +112,10 @@ object UnityAdsManager {
     private var appContext: Context? = null
     private var currentActivityRef: WeakReference<Activity>? = null
 
+    private var initRetryJob: Job? = null
     private var rewardedRetryJob: Job? = null
     private var interstitialRetryJob: Job? = null
-    private var modeSwitchTimeoutJob: Job? = null
+    private var pendingTimeoutJob: Job? = null
 
     private var activeShowTrigger: String? = null
     private var pendingTrigger: String? = null
@@ -119,6 +124,8 @@ object UnityAdsManager {
     private val initListener = object : IUnityAdsInitializationListener {
         override fun onInitializationComplete() {
             scope.launch {
+                initRetryJob?.cancel()
+                initRetryJob = null
                 _sdkStatus.value = SdkStatusState(
                     phase = SdkInitPhase.INITIALIZED,
                     rawErrorCode = null,
@@ -138,7 +145,8 @@ object UnityAdsManager {
                     rawErrorCode = error.name,
                     rawErrorMessage = message
                 )
-                resolvePendingTriggerOnError()
+                resolvePendingTriggerOnError("${error.name}: $message")
+                scheduleRetryInitialize()
             }
         }
     }
@@ -172,7 +180,7 @@ object UnityAdsManager {
                     rawErrorCode = error.name,
                     rawErrorMessage = message
                 )
-                resolvePendingTriggerOnError()
+                resolvePendingTriggerOnError("${error.name}: $message")
                 scheduleRetryLoad(placementId)
             }
         }
@@ -218,7 +226,7 @@ object UnityAdsManager {
             message: String
         ) {
             scope.launch {
-                val trigger = activeShowTrigger ?: "interval_5m"
+                val trigger = activeShowTrigger ?: "interval_4m"
                 activeShowTrigger = null
                 _rewardedState.value = AdPlacementState(
                     placementId = placementId,
@@ -226,12 +234,16 @@ object UnityAdsManager {
                     rawErrorCode = error.name,
                     rawErrorMessage = message
                 )
-                val grantBadmash = trigger == "mode_switch_badmash"
+                if (trigger == "power_on") {
+                    _userMessages.tryEmit("Ad failed to show (${error.name}: $message). Power On cancelled.")
+                }
                 emitRuleEvent(
                     AdRuleEvent(
                         trigger = trigger,
-                        grantBadmashMode = grantBadmash,
-                        outcome = "fallback_no_fill_or_error"
+                        grantPowerOn = false,
+                        grantBadmashMode = false,
+                        nextIntervalSec = INTERVAL_SEC,
+                        outcome = "show_failed"
                     )
                 )
                 loadRewarded()
@@ -256,7 +268,7 @@ object UnityAdsManager {
             state: UnityAds.UnityAdsShowCompletionState
         ) {
             scope.launch {
-                val trigger = activeShowTrigger ?: "interval_5m"
+                val trigger = activeShowTrigger ?: "interval_4m"
                 activeShowTrigger = null
                 _rewardedState.update {
                     it.copy(
@@ -272,7 +284,9 @@ object UnityAdsManager {
                         emitRuleEvent(
                             AdRuleEvent(
                                 trigger = trigger,
-                                grantBadmashMode = trigger == "mode_switch_badmash",
+                                grantPowerOn = trigger == "power_on",
+                                grantBadmashMode = false,
+                                nextIntervalSec = INTERVAL_SEC,
                                 outcome = "completed"
                             )
                         )
@@ -280,10 +294,15 @@ object UnityAdsManager {
 
                     UnityAds.UnityAdsShowCompletionState.SKIPPED -> {
                         _counters.update { it.copy(skips = it.skips + 1) }
+                        if (trigger == "power_on") {
+                            _userMessages.tryEmit("Ad skipped. Watch the full ad to Power On Cosmic AI.")
+                        }
                         emitRuleEvent(
                             AdRuleEvent(
                                 trigger = trigger,
+                                grantPowerOn = false,
                                 grantBadmashMode = false,
+                                nextIntervalSec = INTERVAL_SEC,
                                 outcome = "skipped"
                             )
                         )
@@ -293,7 +312,9 @@ object UnityAdsManager {
                         emitRuleEvent(
                             AdRuleEvent(
                                 trigger = trigger,
+                                grantPowerOn = false,
                                 grantBadmashMode = false,
+                                nextIntervalSec = INTERVAL_SEC,
                                 outcome = "skipped"
                             )
                         )
@@ -320,8 +341,11 @@ object UnityAdsManager {
         appContext = appCtx
 
         if (UnityAds.isInitialized) {
+            initRetryJob?.cancel()
+            initRetryJob = null
             _sdkStatus.value = SdkStatusState(phase = SdkInitPhase.INITIALIZED)
-            if (_rewardedState.value.phase == PlacementLoadPhase.IDLE) {
+            val rewPhase = _rewardedState.value.phase
+            if (rewPhase == PlacementLoadPhase.IDLE || rewPhase == PlacementLoadPhase.FAILED) {
                 loadRewarded()
             }
             return
@@ -331,6 +355,8 @@ object UnityAdsManager {
             return
         }
 
+        initRetryJob?.cancel()
+        initRetryJob = null
         _sdkStatus.value = SdkStatusState(phase = SdkInitPhase.INITIALIZING)
         UnityAds.initialize(
             appCtx,
@@ -386,8 +412,8 @@ object UnityAdsManager {
     fun requestOrShowRewarded(trigger: String) {
         scope.launch {
             val normalizedTrigger = when (trigger) {
-                "app_load", "interval_5m", "mode_switch_badmash" -> trigger
-                else -> "interval_5m"
+                "app_load", "power_on", "interval_4m" -> trigger
+                else -> "interval_4m"
             }
 
             if (activeShowTrigger != null) {
@@ -399,8 +425,10 @@ object UnityAdsManager {
                 emitRuleEvent(
                     AdRuleEvent(
                         trigger = normalizedTrigger,
-                        grantBadmashMode = normalizedTrigger == "mode_switch_badmash",
-                        outcome = "fallback_no_fill_or_error"
+                        grantPowerOn = false,
+                        grantBadmashMode = false,
+                        nextIntervalSec = INTERVAL_SEC,
+                        outcome = "ad_not_loaded"
                     )
                 )
                 return@launch
@@ -414,44 +442,40 @@ object UnityAdsManager {
                 return@launch
             }
 
-            if (sdkPhase == SdkInitPhase.FAILED || rewardedPhase == PlacementLoadPhase.FAILED) {
-                if (rewardedPhase == PlacementLoadPhase.FAILED) {
-                    loadRewarded()
-                } else {
+            if (normalizedTrigger == "power_on") {
+                pendingTrigger = "power_on"
+                if (sdkPhase == SdkInitPhase.UNINITIALIZED || sdkPhase == SdkInitPhase.FAILED) {
                     appContext?.let { initialize(it) }
+                } else if (rewardedPhase == PlacementLoadPhase.IDLE || rewardedPhase == PlacementLoadPhase.FAILED) {
+                    loadRewarded()
                 }
-                emitRuleEvent(
-                    AdRuleEvent(
-                        trigger = normalizedTrigger,
-                        grantBadmashMode = normalizedTrigger == "mode_switch_badmash",
-                        outcome = "fallback_no_fill_or_error"
-                    )
-                )
+                schedulePendingTimeout("power_on", POWER_ON_WAIT_TIMEOUT_MS)
                 return@launch
             }
 
-            // SDK is still initializing or initial Rewarded Ad is loading
-            if (normalizedTrigger == "app_load" || normalizedTrigger == "mode_switch_badmash") {
-                pendingTrigger = normalizedTrigger
-                if (sdkPhase == SdkInitPhase.UNINITIALIZED) {
+            if (normalizedTrigger == "app_load") {
+                pendingTrigger = "app_load"
+                if (sdkPhase == SdkInitPhase.UNINITIALIZED || sdkPhase == SdkInitPhase.FAILED) {
                     appContext?.let { initialize(it) }
-                } else if (sdkPhase == SdkInitPhase.INITIALIZED && rewardedPhase == PlacementLoadPhase.IDLE) {
+                } else if (rewardedPhase == PlacementLoadPhase.IDLE || rewardedPhase == PlacementLoadPhase.FAILED) {
                     loadRewarded()
                 }
-                if (normalizedTrigger == "mode_switch_badmash") {
-                    scheduleModeSwitchFallbackTimeout()
-                }
+                schedulePendingTimeout("app_load", APP_LOAD_WAIT_TIMEOUT_MS)
                 return@launch
             }
 
-            // For interval_5m when not yet loaded: trigger load and reset 5m timer cleanly
-            if (rewardedPhase == PlacementLoadPhase.IDLE) {
+            // For interval_4m when not yet loaded: trigger initialize/load and reset 4m timer cleanly
+            if (sdkPhase == SdkInitPhase.UNINITIALIZED || sdkPhase == SdkInitPhase.FAILED) {
+                appContext?.let { initialize(it) }
+            } else if (rewardedPhase == PlacementLoadPhase.IDLE || rewardedPhase == PlacementLoadPhase.FAILED) {
                 loadRewarded()
             }
             emitRuleEvent(
                 AdRuleEvent(
                     trigger = normalizedTrigger,
+                    grantPowerOn = false,
                     grantBadmashMode = false,
+                    nextIntervalSec = INTERVAL_SEC,
                     outcome = "not_ready"
                 )
             )
@@ -460,8 +484,8 @@ object UnityAdsManager {
 
     private fun showLoadedRewarded(activity: Activity, trigger: String) {
         pendingTrigger = null
-        modeSwitchTimeoutJob?.cancel()
-        modeSwitchTimeoutJob = null
+        pendingTimeoutJob?.cancel()
+        pendingTimeoutJob = null
         activeShowTrigger = trigger
         _rewardedState.update { it.copy(phase = PlacementLoadPhase.SHOWING) }
         UnityAds.show(
@@ -476,40 +500,64 @@ object UnityAdsManager {
         val pending = pendingTrigger ?: return
         val activity = currentActivityRef?.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
         if (activity == null) {
-            resolvePendingTriggerOnError()
+            resolvePendingTriggerOnError("Activity unavailable")
             return
         }
         showLoadedRewarded(activity, pending)
     }
 
-    private fun resolvePendingTriggerOnError() {
+    private fun resolvePendingTriggerOnError(rawReason: String? = null) {
         val pending = pendingTrigger ?: return
+        if (pending == "app_load") {
+            // Keep waiting during startup window while 5s retry runs unless timeout expires
+            return
+        }
         pendingTrigger = null
-        modeSwitchTimeoutJob?.cancel()
-        modeSwitchTimeoutJob = null
+        pendingTimeoutJob?.cancel()
+        pendingTimeoutJob = null
+        if (pending == "power_on") {
+            val detail = rawReason?.let { " ($it)" } ?: ""
+            _userMessages.tryEmit("Rewarded Ad not loaded$detail. Power On blocked until an ad loads.")
+        }
         emitRuleEvent(
             AdRuleEvent(
                 trigger = pending,
-                grantBadmashMode = pending == "mode_switch_badmash",
-                outcome = "fallback_no_fill_or_error"
+                grantPowerOn = false,
+                grantBadmashMode = false,
+                nextIntervalSec = INTERVAL_SEC,
+                outcome = "ad_not_loaded"
             )
         )
     }
 
-    private fun scheduleModeSwitchFallbackTimeout() {
-        modeSwitchTimeoutJob?.cancel()
-        modeSwitchTimeoutJob = scope.launch {
-            delay(MODE_SWITCH_WAIT_TIMEOUT_MS)
-            if (pendingTrigger == "mode_switch_badmash" && activeShowTrigger == null) {
+    private fun schedulePendingTimeout(expectedTrigger: String, timeoutMs: Long) {
+        pendingTimeoutJob?.cancel()
+        pendingTimeoutJob = scope.launch {
+            delay(timeoutMs)
+            if (pendingTrigger == expectedTrigger && activeShowTrigger == null) {
                 pendingTrigger = null
+                if (expectedTrigger == "power_on") {
+                    _userMessages.tryEmit("Rewarded Ad is still loading. Please retry Power On in a moment.")
+                }
                 emitRuleEvent(
                     AdRuleEvent(
-                        trigger = "mode_switch_badmash",
-                        grantBadmashMode = true,
-                        outcome = "fallback_no_fill_or_error"
+                        trigger = expectedTrigger,
+                        grantPowerOn = false,
+                        grantBadmashMode = false,
+                        nextIntervalSec = INTERVAL_SEC,
+                        outcome = if (expectedTrigger == "power_on") "ad_not_loaded" else "not_ready"
                     )
                 )
             }
+        }
+    }
+
+    private fun scheduleRetryInitialize() {
+        if (initRetryJob?.isActive == true) return
+        initRetryJob = scope.launch {
+            delay(RETRY_DELAY_MS)
+            initRetryJob = null
+            appContext?.let { initialize(it) }
         }
     }
 
@@ -517,14 +565,14 @@ object UnityAdsManager {
         if (placementId == Constants.REWARDED_PLACEMENT_ID) {
             if (rewardedRetryJob?.isActive == true) return
             rewardedRetryJob = scope.launch {
-                delay(RETRY_LOAD_DELAY_MS)
+                delay(RETRY_DELAY_MS)
                 rewardedRetryJob = null
                 loadPlacement(placementId)
             }
         } else if (placementId == Constants.INTERSTITIAL_PLACEMENT_ID) {
             if (interstitialRetryJob?.isActive == true) return
             interstitialRetryJob = scope.launch {
-                delay(RETRY_LOAD_DELAY_MS)
+                delay(RETRY_DELAY_MS)
                 interstitialRetryJob = null
                 loadPlacement(placementId)
             }

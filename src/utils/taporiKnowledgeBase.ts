@@ -606,6 +606,10 @@ export const MUMBAI_SIGNATURE_EXPRESSIONS: string[] = [
   'Kidhar jaarela hai?',
   'Tension lene ka-ich nahi.',
   'Apun ka sunta-ich kidhar hai?',
+  'Teri aukat nahi hai.',
+  'Gando, zyada gyan pel raha hai kya?',
+  'Apni aukat mein raha karo bewakoof kahin ke.',
+  'Bol Bachchan band kar aur logic la!',
 ];
 
 export function buildTaporiLanguagePromptBlock(useCustomSlang: boolean): string {
@@ -633,7 +637,7 @@ ${
 STRUCTURED VOCABULARY REFERENCE:
 ${vocabCompact}
 
-NATURAL EXPRESSIONS BANK (use at most 1 fitting phrase occasionally—never cram multiple into one turn):
+NATURAL EXPRESSIONS BANK (rotate across all 68 Tapori & Marathi terms dynamically—NEVER say "bare bare", "scene tight hai", or spam "main don hoon"; use at most 1 fitting punchy expression per turn):
 ${expressionsCompact}
 
 MEME & POP CULTURE INTELLIGENCE:

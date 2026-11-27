@@ -179,19 +179,22 @@ export interface AudioDiagnosticsSnapshot {
   backendLatencyMs: number | null;
 }
 
-export type AdTriggerType = 'app_load' | 'interval_5m' | 'mode_switch_badmash';
+export type AdTriggerType = 'app_load' | 'power_on' | 'interval_4m';
 
 export type AdResolutionOutcome =
   | 'completed'
   | 'skipped'
+  | 'ad_not_loaded'
+  | 'show_failed'
   | 'fallback_no_fill_or_error'
   | 'not_ready';
 
 export interface RewardedAdRuleEvent {
   ad_type: 'rewarded';
   trigger: AdTriggerType;
+  grant_power_on: boolean;
   grant_badmash_mode: boolean;
-  next_interval_sec: 300;
+  next_interval_sec: 240;
 }
 
 export interface UnityPlacementSnapshot {

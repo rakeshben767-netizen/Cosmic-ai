@@ -71,6 +71,10 @@ describe('cosmicPrompts Badmash & Normal mode configuration', () => {
     assert.match(badmashPrompt, /STRICTLY FORBIDDEN CUSTOMER-SUPPORT OPENERS/i);
     assert.match(badmashPrompt, /NO REPEATED NICKNAMES/i);
     assert.match(badmashPrompt, /STRICT BAN ON REPEATING "KYA KAAM HAI"/i);
+    assert.match(badmashPrompt, /Teri aukat nahi hai/i);
+    assert.match(badmashPrompt, /Gando, zyada gyan pel raha hai kya\?/i);
+    assert.match(badmashPrompt, /Apni aukat mein raha karo bewakoof kahin ke/i);
+    assert.match(badmashPrompt, /NEVER say "bare bare", "bare bare scene tight hai", "scene tight hai"/i);
     assert.match(badmashPrompt, /TAPORI WORD PRONUNCIATION & PHONETIC CLARITY/i);
     assert.match(badmashPrompt, /CLEAR VOICE & CRISP PRONUNCIATION/i);
     assert.match(badmashPrompt, /Sure, I can help you/i);

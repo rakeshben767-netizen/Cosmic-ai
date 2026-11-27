@@ -37,7 +37,7 @@ export function UnityAdsStatusCard({
           {onTestRewardedAd && hasNativeBridge && (
             <button
               type="button"
-              onClick={() => onTestRewardedAd('interval_5m')}
+              onClick={() => onTestRewardedAd('interval_4m')}
               className="rounded border border-purple-400/35 bg-purple-500/15 px-2 py-0.5 text-[10px] font-semibold text-purple-200 hover:bg-purple-500/25"
             >
               Show Rewarded
@@ -68,9 +68,9 @@ export function UnityAdsStatusCard({
           {unityAdsSnapshot?.interstitialState.phase ?? 'IDLE'}
         </dd>
 
-        <dt className="text-slate-400">Active 5m Timer</dt>
+        <dt className="text-slate-400">Active 4m Timer</dt>
         <dd className="text-right text-sky-300">
-          {Math.floor(adElapsedActiveMs / 1000)}s / 300s
+          {Math.floor(adElapsedActiveMs / 1000)}s / 240s
         </dd>
       </dl>
 

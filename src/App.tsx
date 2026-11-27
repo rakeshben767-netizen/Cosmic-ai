@@ -44,7 +44,8 @@ export default function App() {
     liveKnowledge,
     unityAdsSnapshot,
     adSnackbarMessage,
-    pendingBadmashUnlock,
+    pendingPowerOnUnlock,
+    powerOnAdNotice,
     lastAdRuleEvent,
     adElapsedActiveMs,
     bridgeRuntime,
@@ -68,6 +69,7 @@ export default function App() {
     reloadRewardedAd,
     triggerRewardedAdManually,
     clearAdSnackbar,
+    clearPowerOnAdNotice,
     clearError,
     clearMicNotice,
   } = useCosmicLive();
@@ -262,6 +264,32 @@ export default function App() {
           </div>
         )}
 
+        {powerOnAdNotice && (
+          <div
+            role="alert"
+            data-testid="power-on-ad-notice"
+            className="pointer-events-auto flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/45 bg-[#1b1409]/95 px-3 py-2 text-xs text-amber-100 shadow-lg"
+          >
+            <span className="min-w-[160px] flex-1 break-words">{powerOnAdNotice}</span>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAdsModalOpen(true)}
+                className="rounded-md border border-purple-400/50 bg-purple-500/20 px-2.5 py-1 font-semibold text-purple-100 hover:bg-purple-500/30"
+              >
+                Ads Status
+              </button>
+              <button
+                type="button"
+                onClick={clearPowerOnAdNotice}
+                className="font-semibold text-amber-300 hover:text-white"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        )}
+
         {errorMessage && (
           <div
             role="alert"
@@ -435,22 +463,25 @@ export default function App() {
           {/* Power On / Off */}
           <button
             type="button"
+            disabled={pendingPowerOnUnlock}
             onClick={() => void togglePower()}
-            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+            data-testid="power-on-toggle"
+            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${
               isLive
                 ? 'border-sky-400/60 bg-sky-500/18 text-sky-100'
                 : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
             }`}
           >
-            <Power className="h-3.5 w-3.5" />
-            <span>{isLive ? 'Power Off' : 'Power On'}</span>
+            <Power className={`h-3.5 w-3.5 ${pendingPowerOnUnlock ? 'animate-pulse text-purple-300' : ''}`} />
+            <span>{isLive ? 'Power Off' : pendingPowerOnUnlock ? 'Loading Ad...' : 'Power On'}</span>
           </button>
 
           {/* Speak / Muted */}
           <button
             type="button"
+            disabled={!isLive && pendingPowerOnUnlock}
             onClick={() => void toggleMicMute()}
-            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${
               isLive && isMicMuted
                 ? 'border-amber-400/60 bg-amber-500/15 text-amber-200'
                 : isLive
@@ -469,16 +500,15 @@ export default function App() {
           {/* 12-Bar Audio Waveform */}
           <VoiceWaveform mode={mode} cosmicState={cosmicState} audioLevelRef={audioLevelRef} />
 
-          {/* Normal Mode / Badmash Mode Switch */}
+          {/* Normal Mode / Badmash Mode Switch (Instant, No Ad Gate) */}
           <button
             type="button"
             role="switch"
             aria-checked={isBadmash}
             aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
-            disabled={pendingBadmashUnlock}
             onClick={toggleBadmashMode}
             data-testid="badmash-mode-toggle"
-            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold tracking-wide whitespace-nowrap transition-all disabled:opacity-70 ${
+            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold tracking-wide whitespace-nowrap transition-all ${
               isBadmash
                 ? 'border-purple-500/80 bg-purple-700/30 text-purple-100 shadow-[0_0_18px_rgba(168,85,247,0.45)]'
                 : 'border-sky-400/45 bg-sky-950/60 text-sky-100 hover:border-sky-300'
@@ -488,11 +518,6 @@ export default function App() {
               <>
                 <Flame className="h-3.5 w-3.5 text-purple-300" />
                 <span>BADMASH MODE</span>
-              </>
-            ) : pendingBadmashUnlock ? (
-              <>
-                <Sparkles className="h-3.5 w-3.5 animate-pulse text-purple-300" />
-                <span>UNLOCKING...</span>
               </>
             ) : (
               <>

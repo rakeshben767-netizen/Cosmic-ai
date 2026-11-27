@@ -366,8 +366,8 @@ class CosmicNativeBridge(private val context: Context) {
     @JavascriptInterface
     fun triggerRewardedAd(trigger: String?): String {
         val cleanTrigger = when (trigger?.trim()) {
-            "app_load", "interval_5m", "mode_switch_badmash" -> trigger.trim()
-            else -> "interval_5m"
+            "app_load", "power_on", "interval_4m" -> trigger.trim()
+            else -> "interval_4m"
         }
         UnityAdsManager.requestOrShowRewarded(cleanTrigger)
         return jsonResult(
