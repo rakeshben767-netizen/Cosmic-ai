@@ -346,18 +346,31 @@ async function fetchGeminiGroundedSearch(
     timeStyle: 'short',
   }).format(now);
   const precisionHint = getCategoryPrecisionHint(category);
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-4-hydrogen',
-    contents: `Current reference date: ${todayIso} (${istTime} IST).
+  const searchPrompt = `Current reference date: ${todayIso} (${istTime} IST).
 Search live web sources for the latest verified real-time information on: "${focusedQuery}" (category: ${category}).
 ${precisionHint}
-Never invent prices, scores, temperatures, or dates if live data could not be verified.`,
-    config: {
-      tools: [{ googleSearch: {} }],
-      abortSignal: signal,
-    },
-  });
+Never invent prices, scores, temperatures, or dates if live data could not be verified.`;
+
+  let response: Awaited<ReturnType<GoogleGenAI['models']['generateContent']>> | null = null;
+  let lastErr: unknown = null;
+  for (const searchModel of ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']) {
+    try {
+      response = await ai.models.generateContent({
+        model: searchModel,
+        contents: searchPrompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          abortSignal: signal,
+        },
+      });
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!response) {
+    throw lastErr instanceof Error ? lastErr : new Error('Grounded search failed');
+  }
 
   const summaryText = (response.text || '').trim();
   const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];

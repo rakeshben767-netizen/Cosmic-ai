@@ -7,9 +7,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   GoogleGenAI,
   Modality,
+  type Content,
   type FunctionResponse,
   type LiveConnectConfig,
   type LiveServerMessage,
+  type Part,
 } from '@google/genai';
 import {
   buildCosmicSystemInstruction,
@@ -427,6 +429,263 @@ async function startServer() {
     void handleKnowledgeSearch(req, res);
   });
 
+  app.options(['/api/chat', '/api/tts'], (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(204).end();
+  });
+
+  app.post('/api/chat', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
+
+    const rawMessage = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    if (!rawMessage) {
+      res.status(400).json({ ok: false, error: 'Message text is required.' });
+      return;
+    }
+
+    const cleanedMessage = rawMessage.slice(0, 2000);
+    const mode: CosmicMode = req.body?.mode === 'badmash' ? 'badmash' : 'normal';
+    const features = resolveCosmicFeatures(req.body?.features as Partial<CosmicFeaturesConfig> | undefined);
+    const conversationMemory = sanitizeConversationMemoryPayload(req.body?.conversationMemory);
+    const recentResponses = Array.isArray(req.body?.recentResponses)
+      ? (req.body.recentResponses as unknown[])
+          .filter((x): x is string => typeof x === 'string')
+          .slice(-6)
+      : [];
+    const developerVerified =
+      Boolean(req.body?.developerVerified) || verifyDeveloperCode(cleanedMessage);
+
+    let ai: GoogleGenAI;
+    try {
+      ai = createGenAIClient();
+    } catch (err) {
+      res.status(503).json({
+        ok: false,
+        error: err instanceof Error ? err.message : 'GEMINI_API_KEY missing on backend.',
+      });
+      return;
+    }
+
+    const systemInstruction = buildCosmicSystemInstruction(mode, {
+      features,
+      conversationMemory,
+      recentResponses,
+      developerVerified,
+      channel: 'text',
+    });
+
+    const textModelCandidates = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+
+    const formatReadableChatError = (rawErr: unknown): string => {
+      const rawMsg = rawErr instanceof Error ? rawErr.message : String(rawErr);
+      try {
+        const parsed = JSON.parse(rawMsg) as { error?: { message?: string } };
+        if (parsed?.error?.message) return parsed.error.message;
+      } catch {
+        // Not a JSON string
+      }
+      return rawMsg || 'Unable to generate Cosmic AI response.';
+    };
+
+    try {
+      let lastModelErr: unknown = null;
+      for (const modelName of textModelCandidates) {
+        try {
+          const contents: Content[] = [{ role: 'user', parts: [{ text: cleanedMessage }] }];
+          const clientToolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+          let latestLiveKnowledge: Awaited<ReturnType<typeof searchLiveKnowledge>> | null = null;
+          let finalReply = '';
+
+          for (let round = 0; round < 3; round++) {
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents,
+              config: {
+                systemInstruction,
+                tools: [{ functionDeclarations: COSMIC_TOOL_DECLARATIONS }],
+              },
+            });
+
+            const calls = response.functionCalls;
+            if (!calls || calls.length === 0) {
+              finalReply = (response.text || '').trim();
+              break;
+            }
+
+            const candidateContent = response.candidates?.[0]?.content;
+            if (candidateContent?.parts && candidateContent.parts.length > 0) {
+              contents.push(candidateContent);
+            } else {
+              const modelParts: Part[] = calls.map((fc) => ({ functionCall: fc }));
+              contents.push({ role: 'model', parts: modelParts });
+            }
+
+            const responseParts: Part[] = [];
+            for (const fc of calls) {
+              const callName = fc.name || '';
+              const args = (fc.args as Record<string, unknown>) || {};
+              const callId = fc.id || `txt_fc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+              if (callName === 'searchLiveKnowledge') {
+                const query = typeof args.query === 'string' ? args.query : cleanedMessage;
+                const category = typeof args.category === 'string' ? args.category : 'general';
+                const searchResult = await searchLiveKnowledge(query, category, { ai });
+                latestLiveKnowledge = searchResult;
+                responseParts.push({
+                  functionResponse: {
+                    id: callId,
+                    name: 'searchLiveKnowledge',
+                    response: {
+                      ok: searchResult.ok,
+                      offline: searchResult.offline,
+                      fetchedAt: searchResult.fetchedAt,
+                      category: searchResult.category,
+                      summary: searchResult.summary,
+                      items: searchResult.items.map((it) => ({
+                        headline: it.headline,
+                        source: it.source,
+                        date: it.dateLabel,
+                        snippet: it.snippet,
+                        corroboratedBy: it.corroboratedBy,
+                      })),
+                      error: searchResult.error ?? null,
+                    },
+                  },
+                });
+              } else {
+                clientToolCalls.push({ id: callId, name: callName, args });
+                responseParts.push({
+                  functionResponse: {
+                    id: callId,
+                    name: callName,
+                    response: {
+                      ok: true,
+                      queuedForDevice: true,
+                      message: `Device action ${callName} has been dispatched to the Cosmic app.`,
+                    },
+                  },
+                });
+              }
+            }
+            contents.push({ role: 'user', parts: responseParts });
+          }
+
+          if (finalReply) {
+            res.json({
+              ok: true,
+              reply: finalReply,
+              mode,
+              model: modelName,
+              timestamp: Date.now(),
+              developerVerified,
+              liveKnowledge: latestLiveKnowledge,
+              clientToolCalls,
+            });
+            return;
+          }
+          lastModelErr = new Error('Cosmic AI returned an empty response. Please try again.');
+        } catch (modelErr) {
+          lastModelErr = modelErr;
+          const rawErrStr = modelErr instanceof Error ? modelErr.message : String(modelErr);
+          const errStr = formatReadableChatError(modelErr);
+          console.warn(`[Cosmic Chat] Model ${modelName} failed: ${errStr}`);
+          const combinedErr = `${rawErrStr} ${errStr}`;
+          if (
+            !/503|429|404|unavailable|high demand|not found|resource_exhausted|quota|rate.?limit/i.test(
+              combinedErr,
+            )
+          ) {
+            break;
+          }
+        }
+      }
+
+      const finalMsg = formatReadableChatError(lastModelErr);
+      console.error('[Cosmic Chat] /api/chat failed across candidates:', finalMsg);
+      res.status(502).json({ ok: false, error: finalMsg });
+    } catch (err) {
+      const msg = formatReadableChatError(err);
+      console.error('[Cosmic Chat] /api/chat error:', msg);
+      res.status(502).json({ ok: false, error: msg });
+    }
+  });
+
+  app.post('/api/tts', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
+
+    const rawText = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!rawText) {
+      res.status(400).json({ ok: false, error: 'Text is required for TTS.' });
+      return;
+    }
+
+    const mode: CosmicMode = req.body?.mode === 'badmash' ? 'badmash' : 'normal';
+    const voiceName = getVoiceNameForMode(mode);
+    const speakText = rawText.replace(/\s+/g, ' ').slice(0, 800);
+
+    let ai: GoogleGenAI;
+    try {
+      ai = createGenAIClient();
+    } catch (err) {
+      res.status(503).json({
+        ok: false,
+        error: err instanceof Error ? err.message : 'GEMINI_API_KEY missing.',
+      });
+      return;
+    }
+
+    try {
+      const ttsResponse = await ai.models.generateContent({
+        model: 'gemini-3.8-flash-lite-tts',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: speakText,
+                speechMetadata: {
+                  style:
+                    mode === 'badmash'
+                      ? 'Confident, street-smart, witty Mumbai Hinglish attitude with crisp pronunciation'
+                      : 'Warm, friendly, calm, polite Hindi and Hinglish assistant voice',
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+        },
+      });
+
+      const inlineData = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      if (!inlineData?.data) {
+        res.status(502).json({ ok: false, error: 'TTS returned no audio data.' });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        audioBase64: inlineData.data,
+        mimeType: inlineData.mimeType || 'audio/wav',
+        voice: voiceName,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'TTS generation failed.';
+      console.warn('[Cosmic TTS] /api/tts error:', msg);
+      res.status(502).json({ ok: false, error: msg });
+    }
+  });
+
   // Protected Admin/Developer Authentication (never uses wildcard CORS)
   const adminAttemptBuckets = new Map<string, number[]>();
   const resolveAdminCorsOrigin = (req: express.Request): string | null => {
@@ -511,6 +770,35 @@ async function startServer() {
     const publicFile = path.resolve(__dirname, 'public', 'privacy-policy.html');
     res.sendFile(process.env.NODE_ENV === 'production' ? prodFile : publicFile);
   });
+
+  app.use('/api', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(404).json({ ok: false, error: 'Requested API endpoint was not found.' });
+  });
+
+  app.use(
+    '/api',
+    (
+      err: Error & { status?: number; statusCode?: number },
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'no-store');
+      const status =
+        typeof err.statusCode === 'number'
+          ? err.statusCode
+          : typeof err.status === 'number'
+            ? err.status
+            : 400;
+      res.status(status >= 400 && status < 600 ? status : 500).json({
+        ok: false,
+        error: err.message || 'Malformed API request.',
+      });
+    },
+  );
 
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');

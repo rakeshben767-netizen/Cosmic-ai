@@ -102,7 +102,15 @@ export async function probeVoiceBackendHealth(
         error: `HTTP ${res.status}`,
       };
     }
-    const json = (await res.json()) as { ok?: boolean; hasApiKey?: boolean };
+    const rawText = (await res.text()).trim();
+    if (!rawText || rawText.startsWith('<')) {
+      return {
+        reachable: false,
+        latencyMs,
+        error: rawText.startsWith('<') ? 'Endpoint returned HTML instead of JSON' : 'Empty health response',
+      };
+    }
+    const json = JSON.parse(rawText) as { ok?: boolean; hasApiKey?: boolean };
     return {
       reachable: Boolean(json?.ok !== false),
       latencyMs,

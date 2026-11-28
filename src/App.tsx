@@ -4,6 +4,8 @@ import {
   ExternalLink,
   Flame,
   Globe,
+  History,
+  Loader2,
   MessageSquare,
   Mic,
   MicOff,
@@ -12,10 +14,14 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { AdminAccessModal } from './components/AdminAccessModal.tsx';
+import { ChatThread } from './components/ChatThread.tsx';
 import { CosmicKnightCanvas } from './components/CosmicKnightCanvas.tsx';
+import { HistoryModal } from './components/HistoryModal.tsx';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal.tsx';
 import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
@@ -28,6 +34,8 @@ export default function App() {
     mode,
     cosmicState,
     isMicMuted,
+    voiceOutputEnabled,
+    isChatResponding,
     isDeveloperVerified,
     isAdminAuthenticated,
     features,
@@ -36,6 +44,8 @@ export default function App() {
     micNotice,
     backendUrl,
     transcripts,
+    unifiedConversations,
+    activeConversationId,
     recentSessions,
     actionLogs,
     diagnosticLogs,
@@ -54,6 +64,7 @@ export default function App() {
     audioLevelRef,
     togglePower,
     toggleMicMute,
+    toggleVoiceOutput,
     toggleBadmashMode,
     updateFeatures,
     runLiveKnowledgeSearch,
@@ -68,6 +79,9 @@ export default function App() {
     runManualSafeAction,
     updateBackendUrl,
     clearRecentSessions,
+    openHistoryConversation,
+    startNewConversation,
+    deleteHistoryConversation,
     reloadRewardedAd,
     clearAdSnackbar,
     clearPowerOnAdNotice,
@@ -77,10 +91,12 @@ export default function App() {
 
   const [resetViewSignal, setResetViewSignal] = useState(0);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [adminDrawerRequested, setAdminDrawerRequested] = useState(false);
   const [textDraft, setTextDraft] = useState('');
 
   const brandTapTimesRef = useRef<number[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const isBadmash = mode === 'badmash';
   const isLive =
@@ -89,12 +105,10 @@ export default function App() {
     cosmicState === 'LISTENING' ||
     cosmicState === 'SPEAKING';
 
-  const latestTranscript = transcripts[transcripts.length - 1] || null;
   const latestCosmicTranscript =
     [...transcripts].reverse().find((entry) => entry.speaker === 'cosmic') || null;
   const latestUserTranscript =
     [...transcripts].reverse().find((entry) => entry.speaker === 'user') || null;
-  const captionEntry = latestCosmicTranscript || latestTranscript;
   const moodProfile = detectResponseMood({
     mode,
     cosmicState,
@@ -107,6 +121,14 @@ export default function App() {
     document.body.dataset.cosmicMode = mode;
     document.body.dataset.cosmicMood = moodProfile.mood;
   }, [cosmicState, mode, moodProfile.mood]);
+
+  // Auto-resize multiline textarea up to 4 lines
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
+  }, [textDraft]);
 
   // Hidden keyboard shortcut (Ctrl+Shift+D or Alt+Shift+A) for protected developer/admin console
   useEffect(() => {
@@ -135,16 +157,29 @@ export default function App() {
     }
   };
 
-  const handleSendText = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!textDraft.trim()) return;
-    const msg = textDraft;
+  const submitTextDraft = () => {
+    const msg = textDraft.trim();
+    if (!msg || isChatResponding) return;
     setTextDraft('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
     void sendTextMessage(msg);
   };
 
+  const handleSendText = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitTextDraft();
+  };
+
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitTextDraft();
+    }
+  };
+
   const latencyStatus = classifyLatency(diagnostics.backendLatencyMs, isLive);
-  const showTextFallback = isLive && (isMicMuted || !diagnostics.micActive || Boolean(micNotice));
 
   const stateColorClass =
     cosmicState === 'ERROR'
@@ -153,11 +188,11 @@ export default function App() {
         ? 'text-amber-300'
         : cosmicState === 'SPEAKING'
           ? isBadmash
-            ? 'text-fuchsia-300'
+            ? 'text-rose-300'
             : 'text-sky-300'
           : cosmicState === 'LISTENING'
             ? isBadmash
-              ? 'text-purple-300'
+              ? 'text-violet-300'
               : 'text-sky-400'
             : 'text-slate-400';
 
@@ -227,7 +262,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="pointer-events-auto flex items-center gap-2 sm:gap-3">
+          <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2.5">
             <div
               data-testid="latency-indicator"
               aria-label={`Network Ping ${latencyStatus.label} (${latencyStatus.meaning})`}
@@ -239,6 +274,22 @@ export default function App() {
                 {latencyStatus.label} · {latencyStatus.meaning}
               </span>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setHistoryModalOpen(true)}
+              data-testid="history-button"
+              aria-label="Conversation History"
+              title="Conversation History (Text & Voice)"
+              className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+                isBadmash
+                  ? 'border-rose-400/35 bg-[#190c1a]/90 text-rose-100 hover:border-rose-300/60'
+                  : 'border-sky-400/30 bg-[#0d101b]/90 text-slate-200 hover:border-sky-300/60 hover:text-white'
+              }`}
+            >
+              <History className={`h-4 w-4 ${isBadmash ? 'text-rose-400' : 'text-sky-400'}`} />
+              <span className="hidden sm:inline">History</span>
+            </button>
 
             <button
               type="button"
@@ -282,8 +333,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Compact Floating Overlays Just Above Bottom Dock (cleared above wrapped mobile dock) */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-32 z-20 mx-auto flex w-[min(92vw,540px)] flex-col items-center gap-2 sm:bottom-24">
+      {/* Unified Bottom HUD Stack: Status Overlays + Scrollable Chat + Text Input + Control Dock */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-3 z-20 mx-auto flex w-[min(94vw,600px)] flex-col items-center gap-2">
         {cosmicState === 'RECONNECTING' && (
           <div
             role="status"
@@ -446,138 +497,176 @@ export default function App() {
           </div>
         )}
 
-        {showTextFallback && (
-          <form
-            onSubmit={handleSendText}
-            className="pointer-events-auto flex w-full max-w-md items-center gap-2 rounded-xl border border-white/15 bg-[#0e1422]/95 px-3 py-1.5 shadow-xl"
-          >
-            <input
-              type="text"
-              value={textDraft}
-              onChange={(e) => setTextDraft(e.target.value)}
-              placeholder={
-                micNotice
-                  ? 'Mic blocked — type here to hear Cosmic speak...'
-                  : 'Type here to talk with Cosmic AI...'
-              }
-              aria-label="Type message to Cosmic AI"
-              className="min-w-0 flex-1 bg-transparent py-1 text-xs text-white placeholder:text-slate-400 focus:outline-none"
-            />
-            <button
-              type="submit"
-              className="flex items-center gap-1 rounded-lg border border-sky-400/45 bg-sky-500/20 px-2.5 py-1 text-xs font-semibold text-sky-100 hover:bg-sky-500/35"
-            >
-              <Send className="h-3 w-3" />
-              <span>Send</span>
-            </button>
-          </form>
-        )}
+        {/* Scrollable Unified Text + Voice Chat Thread */}
+        <ChatThread
+          messages={transcripts}
+          mode={mode}
+          isResponding={isChatResponding}
+          onStartNewChat={startNewConversation}
+        />
 
-        {captionEntry && (
-          <div
-            data-testid="latest-transcript-pill"
-            className={`pointer-events-auto max-h-28 w-full max-w-md overflow-y-auto rounded-xl border px-3.5 py-2 text-xs leading-relaxed shadow-xl backdrop-blur-md ${
-              isBadmash
-                ? 'border-purple-400/35 bg-[#120b1e]/92 text-slate-100'
-                : 'border-sky-400/30 bg-[#0b1120]/92 text-slate-100'
-            }`}
-          >
-            <span
-              className={`font-semibold ${
-                captionEntry.speaker === 'user'
-                  ? 'text-sky-300'
-                  : isBadmash
-                    ? 'text-purple-300'
-                    : 'text-sky-300'
-              }`}
-            >
-              {captionEntry.speaker === 'user' ? 'You:' : 'Cosmic:'}
-            </span>{' '}
-            <span className="break-words whitespace-pre-wrap">{captionEntry.text}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Bottom Floating Control Dock */}
-      <footer
-        data-testid="cosmic-control-dock"
-        className="fixed bottom-4 left-1/2 z-20 w-[min(92vw,345px)] -translate-x-1/2 sm:w-fit sm:max-w-[94vw]"
-      >
-        <div
-          className={`flex flex-wrap items-center justify-center gap-2.5 rounded-2xl border px-3.5 py-2.5 transition-colors sm:px-3 sm:py-2 ${
+        {/* Permanent Multiline Text Chat Input Bar */}
+        <form
+          onSubmit={handleSendText}
+          data-testid="text-chat-form"
+          className={`pointer-events-auto flex w-full items-end gap-2 rounded-2xl border px-3 py-2 backdrop-blur-md transition-colors ${
             isBadmash
-              ? 'border-purple-500/45 bg-[#140c22]/92 shadow-[0_0_24px_rgba(168,85,247,0.22)]'
-              : 'border-sky-400/30 bg-[#0b101d]/92 shadow-[0_0_24px_rgba(56,189,248,0.16)]'
+              ? 'border-rose-500/45 bg-[#160a1c]/92 shadow-[0_0_22px_rgba(244,63,94,0.18)]'
+              : 'border-sky-400/35 bg-[#0b1222]/92 shadow-[0_0_22px_rgba(56,189,248,0.16)]'
           }`}
         >
-          {/* Power On / Off */}
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            onKeyDown={handleTextareaKeyDown}
+            placeholder={isBadmash ? 'Abe, bol kya chahiye...' : 'Message Cosmic...'}
+            aria-label="Message Cosmic"
+            data-testid="text-chat-input"
+            className="max-h-24 min-h-[24px] min-w-0 flex-1 resize-none bg-transparent py-1 text-xs leading-snug text-white placeholder:text-slate-400 focus:outline-none sm:text-[13px]"
+          />
           <button
-            type="button"
-            disabled={pendingPowerOnUnlock}
-            onClick={() => void togglePower()}
-            data-testid="power-on-toggle"
-            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${
-              isLive
-                ? 'border-sky-400/60 bg-sky-500/18 text-sky-100'
-                : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            <Power className={`h-3.5 w-3.5 ${pendingPowerOnUnlock ? 'animate-pulse text-purple-300' : ''}`} />
-            <span>{isLive ? 'Power Off' : pendingPowerOnUnlock ? 'Loading Ad...' : 'Power On'}</span>
-          </button>
-
-          {/* Speak / Muted */}
-          <button
-            type="button"
-            disabled={!isLive && pendingPowerOnUnlock}
-            onClick={() => void toggleMicMute()}
-            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${
-              isLive && isMicMuted
-                ? 'border-amber-400/60 bg-amber-500/15 text-amber-200'
-                : isLive
-                  ? 'border-sky-400/50 bg-sky-500/15 text-sky-100'
-                  : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            {isLive && isMicMuted ? (
-              <MicOff className="h-3.5 w-3.5" />
-            ) : (
-              <Mic className="h-3.5 w-3.5" />
-            )}
-            <span>{isLive && isMicMuted ? 'Muted' : 'Speak'}</span>
-          </button>
-
-          {/* 12-Bar Audio Waveform */}
-          <VoiceWaveform mode={mode} cosmicState={cosmicState} audioLevelRef={audioLevelRef} />
-
-          {/* Normal Mode / Badmash Mode Switch (Instant, No Ad Gate) */}
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isBadmash}
-            aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
-            onClick={toggleBadmashMode}
-            data-testid="badmash-mode-toggle"
-            className={`flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold tracking-wide whitespace-nowrap transition-all ${
+            type="submit"
+            disabled={!textDraft.trim() || isChatResponding}
+            data-testid="text-chat-send"
+            aria-label="Send message"
+            className={`flex h-8 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-45 ${
               isBadmash
-                ? 'border-purple-500/80 bg-purple-700/30 text-purple-100 shadow-[0_0_18px_rgba(168,85,247,0.45)]'
-                : 'border-sky-400/45 bg-sky-950/60 text-sky-100 hover:border-sky-300'
+                ? 'border-rose-400/60 bg-gradient-to-r from-rose-600/45 to-violet-600/45 text-rose-100 hover:from-rose-500/55 hover:to-violet-500/55'
+                : 'border-sky-400/55 bg-sky-500/25 text-sky-100 hover:bg-sky-500/35'
             }`}
           >
-            {isBadmash ? (
-              <>
-                <Flame className="h-3.5 w-3.5 text-purple-300" />
-                <span>BADMASH MODE</span>
-              </>
+            {isChatResponding ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <>
-                <Sparkles className="h-3.5 w-3.5 text-sky-400" />
-                <span>NORMAL MODE</span>
-              </>
+              <Send className="h-3.5 w-3.5" />
             )}
+            <span>Send</span>
           </button>
-        </div>
-      </footer>
+        </form>
+
+        {/* Bottom Floating Control Dock */}
+        <footer
+          data-testid="cosmic-control-dock"
+          className="pointer-events-auto w-full sm:w-fit sm:max-w-full"
+        >
+          <div
+            className={`flex flex-wrap items-center justify-center gap-2 rounded-2xl border px-3 py-2 transition-colors ${
+              isBadmash
+                ? 'border-rose-500/45 bg-[#160a1d]/92 shadow-[0_0_24px_rgba(244,63,94,0.2)]'
+                : 'border-sky-400/30 bg-[#0b101d]/92 shadow-[0_0_24px_rgba(56,189,248,0.16)]'
+            }`}
+          >
+            {/* Power On / Off */}
+            <button
+              type="button"
+              disabled={pendingPowerOnUnlock}
+              onClick={() => void togglePower()}
+              data-testid="power-on-toggle"
+              className={`flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${
+                isLive
+                  ? 'border-sky-400/60 bg-sky-500/18 text-sky-100'
+                  : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
+              }`}
+            >
+              <Power className={`h-3.5 w-3.5 ${pendingPowerOnUnlock ? 'animate-pulse text-rose-300' : ''}`} />
+              <span>{isLive ? 'Power Off' : pendingPowerOnUnlock ? 'Loading Ad...' : 'Power On'}</span>
+            </button>
+
+            {/* Speak / Muted */}
+            <button
+              type="button"
+              disabled={!isLive && pendingPowerOnUnlock}
+              onClick={() => void toggleMicMute()}
+              className={`flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium whitespace-nowrap transition-colors disabled:opacity-75 ${
+                isLive && isMicMuted
+                  ? 'border-amber-400/60 bg-amber-500/15 text-amber-200'
+                  : isLive
+                    ? 'border-sky-400/50 bg-sky-500/15 text-sky-100'
+                    : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
+              }`}
+            >
+              {isLive && isMicMuted ? (
+                <MicOff className="h-3.5 w-3.5" />
+              ) : (
+                <Mic className="h-3.5 w-3.5" />
+              )}
+              <span>{isLive && isMicMuted ? 'Muted' : 'Speak'}</span>
+            </button>
+
+            {/* Voice Output Toggle (Voice ON / Voice OFF) */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={voiceOutputEnabled}
+              onClick={toggleVoiceOutput}
+              data-testid="voice-output-toggle"
+              title={
+                voiceOutputEnabled
+                  ? 'Voice ON — Cosmic speaks replies aloud'
+                  : 'Voice OFF — Text-only replies'
+              }
+              className={`flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
+                voiceOutputEnabled
+                  ? isBadmash
+                    ? 'border-rose-400/55 bg-rose-500/18 text-rose-100'
+                    : 'border-cyan-400/55 bg-cyan-500/18 text-cyan-100'
+                  : 'border-white/15 bg-white/5 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {voiceOutputEnabled ? (
+                <Volume2 className="h-3.5 w-3.5" />
+              ) : (
+                <VolumeX className="h-3.5 w-3.5" />
+              )}
+              <span>{voiceOutputEnabled ? 'Voice ON' : 'Voice OFF'}</span>
+            </button>
+
+            {/* 12-Bar Audio Waveform */}
+            <VoiceWaveform mode={mode} cosmicState={cosmicState} audioLevelRef={audioLevelRef} />
+
+            {/* Normal Mode / Badmash Mode Switch */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isBadmash}
+              aria-label={isBadmash ? 'Switch to Normal Mode' : 'Switch to Badmash Mode'}
+              onClick={toggleBadmashMode}
+              data-testid="badmash-mode-toggle"
+              className={`flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold tracking-wide whitespace-nowrap transition-all ${
+                isBadmash
+                  ? 'border-rose-500/80 bg-gradient-to-r from-rose-700/35 to-violet-700/35 text-rose-100 shadow-[0_0_18px_rgba(244,63,94,0.4)]'
+                  : 'border-sky-400/45 bg-sky-950/60 text-sky-100 hover:border-sky-300'
+              }`}
+            >
+              {isBadmash ? (
+                <>
+                  <Flame className="h-3.5 w-3.5 text-rose-400" />
+                  <span>BADMASH MODE</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+                  <span>NORMAL MODE</span>
+                </>
+              )}
+            </button>
+          </div>
+        </footer>
+      </div>
+
+      {/* Unified Text & Voice Conversation History Modal */}
+      <HistoryModal
+        open={historyModalOpen}
+        conversations={unifiedConversations}
+        activeConversationId={activeConversationId}
+        onClose={() => setHistoryModalOpen(false)}
+        onSelectConversation={openHistoryConversation}
+        onStartNewConversation={startNewConversation}
+        onDeleteConversation={deleteHistoryConversation}
+        onClearAllHistory={clearRecentSessions}
+      />
 
       {/* Privacy Policy Modal */}
       <PrivacyPolicyModal open={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />

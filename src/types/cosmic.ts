@@ -74,12 +74,39 @@ export interface PendingWhatsAppDraft {
   createdAt: number;
 }
 
+export type MessageType = 'TEXT' | 'VOICE' | 'AI_RESPONSE';
+
+export type ConversationType = 'TEXT' | 'VOICE' | 'MIXED';
+
+export interface MessageEntity {
+  messageId: string;
+  conversationId: string;
+  messageText: string;
+  sender: 'user' | 'cosmic';
+  messageType: MessageType;
+  activeMode: CosmicMode;
+  timestamp: number;
+  messageOrder: number;
+}
+
+export interface ConversationEntity {
+  conversationId: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  activeMode: CosmicMode;
+  conversationType: ConversationType;
+  messages: MessageEntity[];
+}
+
 export interface TranscriptEntry {
   id: string;
   speaker: 'user' | 'cosmic';
   text: string;
   timestamp: number;
   mode: CosmicMode;
+  messageType?: MessageType;
+  messageOrder?: number;
 }
 
 export interface ConversationSessionRecord {

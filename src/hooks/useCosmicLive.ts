@@ -5,12 +5,14 @@ import {
   type AdResolutionOutcome,
   type AdTriggerType,
   type AudioDiagnosticsSnapshot,
+  type ConversationEntity,
   type ConversationSessionRecord,
   type CosmicFeaturesConfig,
   type CosmicMode,
   type CosmicState,
   type DiagnosticLogEntry,
   type LiveKnowledgeSearchResult,
+  type MessageType,
   type PendingWhatsAppDraft,
   type RewardedAdRuleEvent,
   type SafeActionName,
@@ -28,13 +30,18 @@ import {
   type AdTriggerState,
 } from '../utils/adTriggerEngine.ts';
 import {
-  buildMemoryContextEntries,
-  clearRecentSessionsStorage,
-  loadRecentSessions,
-  mergeTranscriptEntryList,
-  saveRecentSessions,
-  upsertSessionTranscriptEntry,
-} from '../utils/conversationHistory.ts';
+  appendUnifiedMessage,
+  buildUnifiedMemoryContextEntries,
+  clearAllUnifiedConversations,
+  conversationToSessionRecord,
+  conversationToTranscripts,
+  deleteUnifiedConversation,
+  loadUnifiedConversations,
+  loadUnifiedConversationsSync,
+  loadVoiceOutputPreference,
+  persistUnifiedConversation,
+  saveVoiceOutputPreference,
+} from '../utils/chatHistoryDb.ts';
 import {
   base64ToUint8,
   clampSpeechRate,
@@ -147,17 +154,39 @@ function isPackagedApkOrigin(): boolean {
   return window.location.hostname === 'appassets.androidplatform.net';
 }
 
+function isStaleOrExternalWebOverride(url: string): boolean {
+  const normalized = url.trim().replace(/\/+$/, '');
+  if (!normalized) return false;
+  if (
+    /cosmic-ai-2\.ai\.studio/i.test(normalized) ||
+    /ais-(pre|dev)-.*\.run\.app/i.test(normalized) ||
+    /cosmic-ai-2\.onrender\.com/i.test(normalized)
+  ) {
+    return true;
+  }
+  if (typeof window !== 'undefined' && !isPackagedApkOrigin()) {
+    try {
+      const parsed = new URL(normalized);
+      const isLoopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+      if (!isLoopback && parsed.origin !== window.location.origin) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 function getInitialBackendUrl(): string {
   if (typeof window === 'undefined') return '';
   try {
     const saved = window.localStorage.getItem(BACKEND_STORAGE_KEY)?.trim() || '';
-    if (
-      saved &&
-      /^https?:\/\//i.test(saved) &&
-      !/ais-(pre|dev)-.*\.run\.app/i.test(saved) &&
-      !/cosmic-ai-2\.onrender\.com/i.test(saved)
-    ) {
-      return saved;
+    if (saved && /^https?:\/\//i.test(saved)) {
+      if (isPackagedApkOrigin() || !isStaleOrExternalWebOverride(saved)) {
+        return saved;
+      }
+      window.localStorage.removeItem(BACKEND_STORAGE_KEY);
     }
   } catch {
     // ignore storage errors
@@ -185,10 +214,51 @@ function getInitialFeatures(): CosmicFeaturesConfig {
   return { ...DEFAULT_COSMIC_FEATURES, speechRate };
 }
 
+function describeResponseTarget(res: Response): string {
+  if (!res.url) return '';
+  try {
+    const u = new URL(res.url);
+    return ` [${u.host}${u.pathname}]`;
+  } catch {
+    return '';
+  }
+}
+
+async function safeParseJsonResponse<T>(
+  res: Response,
+  endpointLabel: string,
+): Promise<{ parsed: T | null; errorMessage?: string }> {
+  const rawText = await res.text();
+  const trimmed = rawText.trim();
+  const target = describeResponseTarget(res);
+  if (!trimmed) {
+    return {
+      parsed: null,
+      errorMessage: `${endpointLabel}${target} returned an empty response (HTTP ${res.status}).`,
+    };
+  }
+  if (trimmed.startsWith('<')) {
+    return {
+      parsed: null,
+      errorMessage: `${endpointLabel}${target} returned HTML instead of JSON (HTTP ${res.status}). Refresh the app or ensure the backend server is running.`,
+    };
+  }
+  try {
+    return { parsed: JSON.parse(trimmed) as T };
+  } catch {
+    return {
+      parsed: null,
+      errorMessage: `${endpointLabel}${target} returned invalid JSON (HTTP ${res.status}).`,
+    };
+  }
+}
+
 export function resolveHttpBaseUrl(customBackendUrl: string): string {
   const trimmed = customBackendUrl.trim().replace(/\/+$/, '');
   if (trimmed && /^https?:\/\//i.test(trimmed)) {
-    return trimmed;
+    if (isPackagedApkOrigin() || !isStaleOrExternalWebOverride(trimmed)) {
+      return trimmed;
+    }
   }
   if (isPackagedApkOrigin()) {
     return DEFAULT_ANDROID_BACKEND_URL.replace(/\/+$/, '');
@@ -199,8 +269,10 @@ export function resolveHttpBaseUrl(customBackendUrl: string): string {
 export function resolveLiveWsUrl(customBackendUrl: string): string {
   const trimmed = customBackendUrl.trim().replace(/\/+$/, '');
   if (trimmed && /^https?:\/\//i.test(trimmed)) {
-    const wsBase = trimmed.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
-    return `${wsBase}/live`;
+    if (isPackagedApkOrigin() || !isStaleOrExternalWebOverride(trimmed)) {
+      const wsBase = trimmed.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
+      return `${wsBase}/live`;
+    }
   }
   if (isPackagedApkOrigin()) {
     const wsBase = DEFAULT_ANDROID_BACKEND_URL.replace(/^https:\/\//i, 'wss://');
@@ -223,8 +295,16 @@ export function useCosmicLive() {
   const [micNotice, setMicNotice] = useState<string | null>(null);
   const [backendUrl, setBackendUrlState] = useState<string>(() => getInitialBackendUrl());
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
-  const [recentSessions, setRecentSessions] = useState<ConversationSessionRecord[]>(() =>
-    loadRecentSessions(),
+  const [unifiedConversations, setUnifiedConversations] = useState<ConversationEntity[]>(() =>
+    loadUnifiedConversationsSync(),
+  );
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState<boolean>(() =>
+    loadVoiceOutputPreference(),
+  );
+  const [isChatResponding, setIsChatResponding] = useState<boolean>(false);
+  const recentSessions: ConversationSessionRecord[] = unifiedConversations.map(
+    conversationToSessionRecord,
   );
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosticLogEntry[]>([]);
@@ -265,10 +345,12 @@ export function useCosmicLive() {
   const modeRef = useRef<CosmicMode>(mode);
   const stateRef = useRef<CosmicState>(cosmicState);
   const isMicMutedRef = useRef<boolean>(isMicMuted);
+  const voiceOutputEnabledRef = useRef<boolean>(voiceOutputEnabled);
+  const isDeveloperVerifiedRef = useRef<boolean>(isDeveloperVerified);
   const featuresRef = useRef<CosmicFeaturesConfig>(features);
   const backendUrlRef = useRef<string>(backendUrl);
   const transcriptsRef = useRef<TranscriptEntry[]>(transcripts);
-  const recentSessionsRef = useRef<ConversationSessionRecord[]>(recentSessions);
+  const unifiedConversationsRef = useRef<ConversationEntity[]>(unifiedConversations);
   const sessionDurationStateRef = useRef<PersistedSessionDurationState>(sessionDurationState);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeSessionStartedAtRef = useRef<number>(Date.now());
@@ -359,12 +441,33 @@ export function useCosmicLive() {
   }, [transcripts]);
 
   useEffect(() => {
-    recentSessionsRef.current = recentSessions;
-  }, [recentSessions]);
+    unifiedConversationsRef.current = unifiedConversations;
+  }, [unifiedConversations]);
+
+  useEffect(() => {
+    voiceOutputEnabledRef.current = voiceOutputEnabled;
+  }, [voiceOutputEnabled]);
+
+  useEffect(() => {
+    isDeveloperVerifiedRef.current = isDeveloperVerified;
+  }, [isDeveloperVerified]);
 
   useEffect(() => {
     sessionDurationStateRef.current = sessionDurationState;
   }, [sessionDurationState]);
+
+  // Hydrate full persistent unified conversation history from IndexedDB on mount
+  useEffect(() => {
+    let cancelled = false;
+    void loadUnifiedConversations().then((loaded) => {
+      if (cancelled || loaded.length === 0) return;
+      unifiedConversationsRef.current = loaded;
+      setUnifiedConversations(loaded);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const persistDurationCheckpoint = useCallback((reason: SessionEndReason) => {
     const cycleAnchor = activeVoiceSessionStartedAtRef.current;
@@ -418,45 +521,85 @@ export function useCosmicLive() {
   );
 
   const appendTranscript = useCallback(
-    (speaker: TranscriptEntry['speaker'], text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
+    (
+      speaker: TranscriptEntry['speaker'],
+      text: string,
+      messageTypeOverride?: MessageType,
+    ) => {
+      const cleaned = text.replace(/\r\n/g, '\n').trim();
+      if (!cleaned) return;
       const now = Date.now();
       if (!activeSessionIdRef.current) {
-        activeSessionIdRef.current = `sess_${now}_${Math.random().toString(36).slice(2, 7)}`;
+        const freshId = `conv_${now}_${Math.random().toString(36).slice(2, 7)}`;
+        activeSessionIdRef.current = freshId;
         activeSessionStartedAtRef.current = now;
+        setActiveConversationId(freshId);
       }
-      const entry: TranscriptEntry = {
-        id: `tr_${now}_${Math.random().toString(36).slice(2, 6)}`,
-        speaker,
-        text: trimmed,
+      const conversationId = activeSessionIdRef.current;
+      const messageType: MessageType =
+        messageTypeOverride ?? (speaker === 'cosmic' ? 'AI_RESPONSE' : 'VOICE');
+
+      const result = appendUnifiedMessage(unifiedConversationsRef.current, {
+        conversationId,
+        sender: speaker,
+        messageText: cleaned,
+        messageType,
+        activeMode: modeRef.current,
         timestamp: now,
-        mode: modeRef.current,
-      };
-      setTranscripts((prev) => {
-        const next = mergeTranscriptEntryList(prev, entry, 25);
-        transcriptsRef.current = next;
-        return next;
       });
-      const sessionId = activeSessionIdRef.current;
-      const startedAt = activeSessionStartedAtRef.current;
-      setRecentSessions((prev) => {
-        const next = saveRecentSessions(
-          upsertSessionTranscriptEntry(prev, sessionId, entry, startedAt),
-        );
-        recentSessionsRef.current = next;
-        return next;
-      });
+
+      unifiedConversationsRef.current = result.conversations;
+      setUnifiedConversations(result.conversations);
+
+      const nextTranscripts = conversationToTranscripts(result.updatedConversation);
+      transcriptsRef.current = nextTranscripts;
+      setTranscripts(nextTranscripts);
+
+      void persistUnifiedConversation(result.updatedConversation, result.conversations);
     },
     [],
   );
 
   const clearRecentSessions = useCallback(() => {
-    clearRecentSessionsStorage();
-    recentSessionsRef.current = [];
-    setRecentSessions([]);
+    void clearAllUnifiedConversations();
+    unifiedConversationsRef.current = [];
+    setUnifiedConversations([]);
     activeSessionIdRef.current = null;
-    addLog('info', 'gemini', 'Cleared saved recent conversation sessions.');
+    setActiveConversationId(null);
+    transcriptsRef.current = [];
+    setTranscripts([]);
+    addLog('info', 'gemini', 'Cleared all saved unified conversation history.');
+  }, [addLog]);
+
+  const deleteHistoryConversation = useCallback(
+    (conversationId: string) => {
+      const next = unifiedConversationsRef.current.filter(
+        (c) => c.conversationId !== conversationId,
+      );
+      unifiedConversationsRef.current = next;
+      setUnifiedConversations(next);
+      if (activeSessionIdRef.current === conversationId) {
+        activeSessionIdRef.current = null;
+        setActiveConversationId(null);
+        transcriptsRef.current = [];
+        setTranscripts([]);
+      }
+      void deleteUnifiedConversation(conversationId, next);
+      addLog('info', 'gemini', `Deleted conversation ${conversationId} from history.`);
+    },
+    [addLog],
+  );
+
+  const startNewConversation = useCallback(() => {
+    const now = Date.now();
+    const freshId = `conv_${now}_${Math.random().toString(36).slice(2, 7)}`;
+    activeSessionIdRef.current = freshId;
+    activeSessionStartedAtRef.current = now;
+    setActiveConversationId(freshId);
+    transcriptsRef.current = [];
+    setTranscripts([]);
+    setErrorMessage(null);
+    addLog('info', 'gemini', 'Started a fresh Cosmic conversation.');
   }, [addLog]);
 
   const clearReconnectTimers = useCallback(() => {
@@ -564,6 +707,9 @@ export function useCosmicLive() {
 
   const playPcmChunk = useCallback(
     async (base64Data: string, mimeType: string) => {
+      if (!voiceOutputEnabledRef.current) {
+        return;
+      }
       try {
         const ctx = await ensureAudioContext();
         if (ctx.state !== 'running') {
@@ -1048,12 +1194,14 @@ export function useCosmicLive() {
 
       if (msg.type === 'interrupted') {
         clearAudioQueue('user-interrupted');
+        setIsChatResponding(false);
         setCosmicState('LISTENING');
         addLog('info', 'playback', 'Gemini Live turn interrupted by user speech.');
         return;
       }
 
       if (msg.type === 'turn_complete') {
+        setIsChatResponding(false);
         if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
           setCosmicState('LISTENING');
         }
@@ -1061,12 +1209,13 @@ export function useCosmicLive() {
       }
 
       if (msg.type === 'input_transcript' && msg.text) {
-        appendTranscript('user', msg.text);
+        appendTranscript('user', msg.text, 'VOICE');
         return;
       }
 
       if (msg.type === 'output_transcript' && msg.text) {
-        appendTranscript('cosmic', msg.text);
+        setIsChatResponding(false);
+        appendTranscript('cosmic', msg.text, 'AI_RESPONSE');
         return;
       }
 
@@ -1205,6 +1354,7 @@ export function useCosmicLive() {
 
       if (msg.type === 'disconnected') {
         isSessionReadyRef.current = false;
+        setIsChatResponding(false);
         clearAudioQueue('server-disconnected');
         if (!userWantsLiveRef.current) {
           setCosmicState('IDLE');
@@ -1415,8 +1565,9 @@ export function useCosmicLive() {
               badmashMode: modeRef.current === 'badmash',
               resumeHandle: resumeHandleRef.current,
               features: featuresRef.current,
-              conversationMemory: buildMemoryContextEntries(
-                recentSessionsRef.current,
+              conversationMemory: buildUnifiedMemoryContextEntries(
+                unifiedConversationsRef.current,
+                activeSessionIdRef.current,
                 transcriptsRef.current,
               ),
             }),
@@ -1518,8 +1669,10 @@ export function useCosmicLive() {
     clearReconnectTimers();
     if (!activeSessionIdRef.current) {
       const now = Date.now();
-      activeSessionIdRef.current = `sess_${now}_${Math.random().toString(36).slice(2, 7)}`;
+      const freshId = `conv_${now}_${Math.random().toString(36).slice(2, 7)}`;
+      activeSessionIdRef.current = freshId;
       activeSessionStartedAtRef.current = now;
+      setActiveConversationId(freshId);
       setTranscripts([]);
       transcriptsRef.current = [];
     }
@@ -1540,22 +1693,272 @@ export function useCosmicLive() {
     }
   }, [ensureAudioContext, startMicrophone]);
 
+  const speakTextReplyViaTts = useCallback(
+    async (text: string, speakMode: CosmicMode) => {
+      if (!voiceOutputEnabledRef.current || !text.trim()) return;
+      // Avoid overlapping if Live WebSocket audio is already queued
+      if (activeSourcesRef.current.size > 0) return;
+
+      const base = resolveHttpBaseUrl(backendUrlRef.current);
+      try {
+        const res = await fetch(`${base}/api/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text.slice(0, 800), mode: speakMode }),
+        });
+        if (!voiceOutputEnabledRef.current) return;
+        const { parsed: data } = await safeParseJsonResponse<{
+          ok?: boolean;
+          audioBase64?: string;
+        }>(res, 'TTS');
+        if (res.ok && data?.ok && data.audioBase64) {
+          const ctx = await ensureAudioContext();
+          if (ctx.state !== 'running') {
+            await ctx.resume();
+          }
+          const gainNode = masterGainRef.current;
+          if (!gainNode || !voiceOutputEnabledRef.current) return;
+
+          const bytes = base64ToUint8(data.audioBase64);
+          const arrayBuf = new ArrayBuffer(bytes.byteLength);
+          new Uint8Array(arrayBuf).set(bytes);
+          const audioBuffer = await ctx.decodeAudioData(arrayBuf);
+          if (!voiceOutputEnabledRef.current) return;
+
+          clearAudioQueue('tts-reply');
+          const speechRate = clampSpeechRate(featuresRef.current.speechRate);
+          const source = ctx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.playbackRate.value = speechRate;
+          source.connect(badmashBassFilterRef.current ?? gainNode);
+
+          activeSourcesRef.current.add(source);
+          setCosmicState('SPEAKING');
+          source.onended = () => {
+            activeSourcesRef.current.delete(source);
+            try {
+              source.disconnect();
+            } catch {
+              // ignore
+            }
+            if (activeSourcesRef.current.size === 0 && stateRef.current === 'SPEAKING') {
+              setCosmicState(
+                wsRef.current?.readyState === WebSocket.OPEN && isSessionReadyRef.current
+                  ? 'LISTENING'
+                  : 'IDLE',
+              );
+            }
+          };
+          source.start();
+          return;
+        }
+      } catch (err) {
+        addLog(
+          'warn',
+          'playback',
+          `Gemini TTS fallback to browser speech: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // Clean browser speechSynthesis fallback when backend TTS is unreachable
+      if (
+        voiceOutputEnabledRef.current &&
+        typeof window !== 'undefined' &&
+        'speechSynthesis' in window
+      ) {
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = 'hi-IN';
+          utterance.rate = clampSpeechRate(featuresRef.current.speechRate);
+          utterance.onstart = () => {
+            if (stateRef.current === 'IDLE') setCosmicState('SPEAKING');
+          };
+          utterance.onend = () => {
+            if (stateRef.current === 'SPEAKING' && activeSourcesRef.current.size === 0) {
+              setCosmicState(
+                wsRef.current?.readyState === WebSocket.OPEN && isSessionReadyRef.current
+                  ? 'LISTENING'
+                  : 'IDLE',
+              );
+            }
+          };
+          window.speechSynthesis.speak(utterance);
+        } catch {
+          // ignore speechSynthesis failure
+        }
+      }
+    },
+    [addLog, clearAudioQueue, ensureAudioContext],
+  );
+
   const sendTextMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      await ensureAudioContext();
+      setErrorMessage(null);
+
+      // 1. Add typed message immediately into unified active conversation (TEXT)
+      appendTranscript('user', trimmed, 'TEXT');
+
+      // 2. Route via Live WebSocket if an active voice session is connected & ready
       const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN || !isSessionReadyRef.current) {
-        setErrorMessage('Power on Cosmic AI and wait for Ready/Listening before sending.');
+      if (ws && ws.readyState === WebSocket.OPEN && isSessionReadyRef.current) {
+        if (voiceOutputEnabledRef.current) {
+          await ensureAudioContext();
+        }
+        clearAudioQueue('user-text-interrupt');
+        setIsChatResponding(true);
+        ws.send(JSON.stringify({ type: 'text', text: trimmed }));
         return;
       }
-      clearAudioQueue('user-text-interrupt');
-      appendTranscript('user', trimmed);
-      ws.send(JSON.stringify({ type: 'text', text: trimmed }));
+
+      // 3. Otherwise execute via server-side Gemini Text Chat endpoint (/api/chat)
+      const activeModeAtSend = modeRef.current;
+      setIsChatResponding(true);
+      const base = resolveHttpBaseUrl(backendUrlRef.current);
+      const recentCosmicOpeners = transcriptsRef.current
+        .filter((t) => t.speaker === 'cosmic')
+        .map((t) => t.text.split(/(?<=[.!?])\s+/)[0] || t.text)
+        .slice(-6);
+
+      try {
+        const startedAt = Date.now();
+        const requestBody = JSON.stringify({
+          message: trimmed,
+          mode: activeModeAtSend,
+          features: featuresRef.current,
+          developerVerified: isDeveloperVerifiedRef.current,
+          recentResponses: recentCosmicOpeners,
+          conversationMemory: buildUnifiedMemoryContextEntries(
+            unifiedConversationsRef.current,
+            activeSessionIdRef.current,
+            transcriptsRef.current,
+          ),
+        });
+
+        let res: Response | null = null;
+        let parsedResult: {
+          parsed: {
+            ok?: boolean;
+            reply?: string;
+            mode?: CosmicMode;
+            developerVerified?: boolean;
+            liveKnowledge?: LiveKnowledgeSearchResult | null;
+            clientToolCalls?: Array<{ id: string; name: string; args: Record<string, unknown> }>;
+            error?: string;
+          } | null;
+          errorMessage?: string;
+        } = { parsed: null };
+
+        const candidateBases =
+          base && !isPackagedApkOrigin() ? [base, ''] : [base, base];
+
+        for (let attempt = 0; attempt < candidateBases.length; attempt++) {
+          const targetBase = candidateBases[attempt];
+          res = await fetch(`${targetBase}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: requestBody,
+          });
+          parsedResult = await safeParseJsonResponse(res, 'Cosmic Chat API');
+          const looksLikeWarmupHtml =
+            !parsedResult.parsed &&
+            parsedResult.errorMessage?.includes('HTML instead of JSON');
+          if (!looksLikeWarmupHtml || attempt === candidateBases.length - 1) {
+            if (targetBase === '' && base !== '' && parsedResult.parsed) {
+              try {
+                window.localStorage.removeItem(BACKEND_STORAGE_KEY);
+              } catch {
+                // ignore
+              }
+              setBackendUrlState('');
+            }
+            break;
+          }
+          if (targetBase === candidateBases[attempt + 1]) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1200));
+          }
+        }
+
+        const rttMs = Math.max(1, Date.now() - startedAt);
+        setDiagnostics((prev) => ({ ...prev, backendLatencyMs: rttMs }));
+
+        const data = parsedResult.parsed;
+        const parseErr = parsedResult.errorMessage;
+
+        if (!res?.ok || !data?.ok || !data.reply) {
+          const errMsg =
+            data?.error ||
+            parseErr ||
+            'Unable to get response from Cosmic AI right now. Check your network and try again.';
+          setErrorMessage(errMsg);
+          addLog('error', 'gemini', `Text chat failed: ${errMsg}`);
+          return;
+        }
+
+        if (data.developerVerified) {
+          setIsDeveloperVerified(true);
+        }
+        if (data.liveKnowledge) {
+          setLiveKnowledge(data.liveKnowledge);
+        }
+
+        appendTranscript('cosmic', data.reply, 'AI_RESPONSE');
+
+        if (Array.isArray(data.clientToolCalls) && data.clientToolCalls.length > 0) {
+          const bridge = getCosmicNativeBridge();
+          for (const call of data.clientToolCalls) {
+            const toolRes = await executeSafeToolCall(call.name, call.args || {}, bridge);
+            if (toolRes.pendingDraft) setPendingWhatsAppDraft(toolRes.pendingDraft);
+            else if (toolRes.clearDraft) setPendingWhatsAppDraft(null);
+            setActionLogs((prev) => [toolRes.logEntry, ...prev].slice(0, 30));
+          }
+        }
+
+        if (voiceOutputEnabledRef.current) {
+          void speakTextReplyViaTts(data.reply, data.mode || activeModeAtSend);
+        }
+      } catch (err) {
+        const msg =
+          err instanceof Error
+            ? `Network error while messaging Cosmic AI: ${err.message}`
+            : 'Network error while messaging Cosmic AI.';
+        setErrorMessage(msg);
+        addLog('error', 'network', msg);
+      } finally {
+        setIsChatResponding(false);
+      }
     },
-    [appendTranscript, clearAudioQueue, ensureAudioContext],
+    [addLog, appendTranscript, clearAudioQueue, ensureAudioContext, speakTextReplyViaTts],
   );
+
+  const toggleVoiceOutput = useCallback(() => {
+    setVoiceOutputEnabled((prev) => {
+      const next = !prev;
+      voiceOutputEnabledRef.current = next;
+      saveVoiceOutputPreference(next);
+      if (!next) {
+        clearAudioQueue('voice-output-toggled-off');
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          try {
+            window.speechSynthesis.cancel();
+          } catch {
+            // ignore
+          }
+        }
+        if (stateRef.current === 'SPEAKING') {
+          setCosmicState(
+            wsRef.current?.readyState === WebSocket.OPEN && isSessionReadyRef.current
+              ? 'LISTENING'
+              : 'IDLE',
+          );
+        }
+      }
+      addLog('info', 'playback', next ? 'Voice output enabled (Voice ON).' : 'Voice output muted (Voice OFF, text only).');
+      return next;
+    });
+  }, [addLog, clearAudioQueue]);
 
   const setModeDirect = useCallback(
     (next: CosmicMode) => {
@@ -1576,8 +1979,9 @@ export function useCosmicLive() {
             type: 'set_mode',
             badmashMode: next === 'badmash',
             features: featuresRef.current,
-            conversationMemory: buildMemoryContextEntries(
-              recentSessionsRef.current,
+            conversationMemory: buildUnifiedMemoryContextEntries(
+              unifiedConversationsRef.current,
+              activeSessionIdRef.current,
               transcriptsRef.current,
             ),
           }),
@@ -1585,6 +1989,27 @@ export function useCosmicLive() {
       }
     },
     [addLog, clearAudioQueue],
+  );
+
+  const openHistoryConversation = useCallback(
+    (conversationId: string) => {
+      const target = unifiedConversationsRef.current.find(
+        (c) => c.conversationId === conversationId,
+      );
+      if (!target) return;
+      activeSessionIdRef.current = target.conversationId;
+      activeSessionStartedAtRef.current = target.createdAt;
+      setActiveConversationId(target.conversationId);
+      const restored = conversationToTranscripts(target);
+      transcriptsRef.current = restored;
+      setTranscripts(restored);
+      setErrorMessage(null);
+      if (target.activeMode !== modeRef.current) {
+        setModeDirect(target.activeMode);
+      }
+      addLog('info', 'gemini', `Opened saved conversation "${target.title}" (${restored.length} messages).`);
+    },
+    [addLog, setModeDirect],
   );
 
   const handleAdResolution = useCallback(
@@ -1711,8 +2136,9 @@ export function useCosmicLive() {
             JSON.stringify({
               type: 'update_features',
               features: next,
-              conversationMemory: buildMemoryContextEntries(
-                recentSessionsRef.current,
+              conversationMemory: buildUnifiedMemoryContextEntries(
+                unifiedConversationsRef.current,
+                activeSessionIdRef.current,
                 transcriptsRef.current,
               ),
             }),
@@ -1733,7 +2159,12 @@ export function useCosmicLive() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, category }),
         });
-        const data = (await res.json()) as LiveKnowledgeSearchResult;
+        const { parsed, errorMessage: parseErr } =
+          await safeParseJsonResponse<LiveKnowledgeSearchResult>(res, 'Live Knowledge API');
+        if (!parsed) {
+          throw new Error(parseErr || `Live knowledge request failed (HTTP ${res.status}).`);
+        }
+        const data = parsed;
         setLiveKnowledge(data);
         addLog(
           data.ok ? 'info' : 'warn',
@@ -1987,7 +2418,14 @@ export function useCosmicLive() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ passcode }),
         });
-        const data = (await res.json()) as { ok?: boolean; token?: string; error?: string };
+        const { parsed: data, errorMessage: parseErr } = await safeParseJsonResponse<{
+          ok?: boolean;
+          token?: string;
+          error?: string;
+        }>(res, 'Admin Verify API');
+        if (!data) {
+          return { ok: false, error: parseErr || 'Admin verification returned invalid response.' };
+        }
         if (res.ok && data.ok && data.token) {
           setAdminToken(data.token);
           setIsDeveloperVerified(true);
@@ -2169,6 +2607,8 @@ export function useCosmicLive() {
     mode,
     cosmicState,
     isMicMuted,
+    voiceOutputEnabled,
+    isChatResponding,
     isDeveloperVerified,
     isAdminAuthenticated: Boolean(adminToken),
     features,
@@ -2177,6 +2617,8 @@ export function useCosmicLive() {
     micNotice,
     backendUrl,
     transcripts,
+    unifiedConversations,
+    activeConversationId,
     recentSessions,
     actionLogs,
     diagnosticLogs,
@@ -2195,6 +2637,7 @@ export function useCosmicLive() {
     audioLevelRef,
     togglePower,
     toggleMicMute,
+    toggleVoiceOutput,
     toggleBadmashMode,
     updateFeatures,
     runLiveKnowledgeSearch,
@@ -2209,6 +2652,9 @@ export function useCosmicLive() {
     runManualSafeAction,
     updateBackendUrl,
     clearRecentSessions,
+    openHistoryConversation,
+    startNewConversation,
+    deleteHistoryConversation,
     reloadRewardedAd,
     triggerRewardedAdManually: dispatchRewardedAdTrigger,
     clearAdSnackbar: () => setAdSnackbarMessage(null),
