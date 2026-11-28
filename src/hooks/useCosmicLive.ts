@@ -598,6 +598,7 @@ export function useCosmicLive() {
     setActiveConversationId(freshId);
     transcriptsRef.current = [];
     setTranscripts([]);
+    setLiveKnowledge(null);
     setErrorMessage(null);
     addLog('info', 'gemini', 'Started a fresh Cosmic conversation.');
   }, [addLog]);
@@ -1694,10 +1695,13 @@ export function useCosmicLive() {
   }, [ensureAudioContext, startMicrophone]);
 
   const speakTextReplyViaTts = useCallback(
-    async (text: string, speakMode: CosmicMode) => {
-      if (!voiceOutputEnabledRef.current || !text.trim()) return;
+    async (text: string, speakMode: CosmicMode, force = false) => {
+      if ((!force && !voiceOutputEnabledRef.current) || !text.trim()) return;
       // Avoid overlapping if Live WebSocket audio is already queued
-      if (activeSourcesRef.current.size > 0) return;
+      if (!force && activeSourcesRef.current.size > 0) return;
+      if (force) {
+        clearAudioQueue('manual-speak-button');
+      }
 
       const base = resolveHttpBaseUrl(backendUrlRef.current);
       try {
@@ -1706,7 +1710,7 @@ export function useCosmicLive() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: text.slice(0, 800), mode: speakMode }),
         });
-        if (!voiceOutputEnabledRef.current) return;
+        if (!force && !voiceOutputEnabledRef.current) return;
         const { parsed: data } = await safeParseJsonResponse<{
           ok?: boolean;
           audioBase64?: string;
@@ -1717,13 +1721,13 @@ export function useCosmicLive() {
             await ctx.resume();
           }
           const gainNode = masterGainRef.current;
-          if (!gainNode || !voiceOutputEnabledRef.current) return;
+          if (!gainNode || (!force && !voiceOutputEnabledRef.current)) return;
 
           const bytes = base64ToUint8(data.audioBase64);
           const arrayBuf = new ArrayBuffer(bytes.byteLength);
           new Uint8Array(arrayBuf).set(bytes);
           const audioBuffer = await ctx.decodeAudioData(arrayBuf);
-          if (!voiceOutputEnabledRef.current) return;
+          if (!force && !voiceOutputEnabledRef.current) return;
 
           clearAudioQueue('tts-reply');
           const speechRate = clampSpeechRate(featuresRef.current.speechRate);
@@ -1762,7 +1766,7 @@ export function useCosmicLive() {
 
       // Clean browser speechSynthesis fallback when backend TTS is unreachable
       if (
-        voiceOutputEnabledRef.current &&
+        (force || voiceOutputEnabledRef.current) &&
         typeof window !== 'undefined' &&
         'speechSynthesis' in window
       ) {
@@ -1797,6 +1801,7 @@ export function useCosmicLive() {
       const trimmed = text.trim();
       if (!trimmed) return;
       setErrorMessage(null);
+      setLiveKnowledge(null);
 
       // 1. Add typed message immediately into unified active conversation (TEXT)
       appendTranscript('user', trimmed, 'TEXT');
@@ -2003,6 +2008,7 @@ export function useCosmicLive() {
       const restored = conversationToTranscripts(target);
       transcriptsRef.current = restored;
       setTranscripts(restored);
+      setLiveKnowledge(null);
       setErrorMessage(null);
       if (target.activeMode !== modeRef.current) {
         setModeDirect(target.activeMode);
@@ -2648,6 +2654,8 @@ export function useCosmicLive() {
     logoutAdmin,
     retryMicrophone,
     sendTextMessage,
+    speakMessageAloud: (text: string, speakMode?: CosmicMode) =>
+      speakTextReplyViaTts(text, speakMode ?? modeRef.current, true),
     testSpeaker,
     runManualSafeAction,
     updateBackendUrl,

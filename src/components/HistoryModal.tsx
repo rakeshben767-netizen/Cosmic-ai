@@ -73,26 +73,29 @@ export function HistoryModal({
       aria-modal="true"
       aria-label="Cosmic AI Conversation History"
       data-testid="history-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 backdrop-blur-md sm:p-6"
+      className="fixed inset-0 z-50 flex justify-start bg-black/70 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-sky-400/30 bg-[#080d1a]/96 shadow-[0_0_40px_rgba(14,165,233,0.22)]">
+      <div className="flex h-full w-[min(90vw,390px)] flex-col overflow-hidden border-r border-sky-400/25 bg-[#070b16]/98 shadow-[12px_0_48px_rgba(14,165,233,0.18)]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3.5 sm:px-5">
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3.5">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-sky-400/35 bg-sky-500/15 text-sky-300">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-sky-400/35 bg-sky-500/15 text-sky-300">
               <History className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="font-display text-sm font-bold tracking-wider text-white uppercase sm:text-base">
-                Conversation History
+              <h2 className="font-display text-sm font-bold tracking-wider text-white uppercase">
+                Chat History
               </h2>
               <p className="font-mono text-[10px] text-slate-400 tabular-nums">
-                {conversations.length} saved {conversations.length === 1 ? 'conversation' : 'conversations'} · Text &amp; Voice
+                {conversations.length} {conversations.length === 1 ? 'session' : 'sessions'} · Text &amp; Voice
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => {
@@ -100,17 +103,17 @@ export function HistoryModal({
                 onClose();
               }}
               data-testid="history-new-chat-btn"
-              className="flex items-center gap-1 rounded-lg border border-sky-400/40 bg-sky-500/15 px-2.5 py-1.5 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/25"
+              className="flex min-h-[36px] items-center gap-1 rounded-lg border border-sky-400/40 bg-sky-500/15 px-2.5 py-1.5 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/25"
             >
               <MessageSquarePlus className="h-3.5 w-3.5" />
-              <span>New Chat</span>
+              <span>New</span>
             </button>
 
             <button
               type="button"
               onClick={onClose}
               aria-label="Close History"
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 transition-colors hover:border-white/30 hover:text-white"
             >
               <X className="h-4 w-4" />
             </button>
