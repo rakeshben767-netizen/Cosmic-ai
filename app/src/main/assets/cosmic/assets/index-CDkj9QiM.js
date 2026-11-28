@@ -22510,75 +22510,6 @@ var _color = /*@__PURE__*/ new Color();
 */
 Color.NAMES = _colorKeywords;
 /**
-* This class can be used to define an exponential squared fog,
-* which gives a clear view near the camera and a faster than exponentially
-* densening fog farther from the camera.
-*
-* ```js
-* const scene = new THREE.Scene();
-* scene.fog = new THREE.FogExp2( 0xcccccc, 0.002 );
-* ```
-*/
-var FogExp2 = class FogExp2 {
-	/**
-	* Constructs a new fog.
-	*
-	* @param {number|Color} color - The fog's color.
-	* @param {number} [density=0.00025] - Defines how fast the fog will grow dense.
-	*/
-	constructor(color, density = 25e-5) {
-		/**
-		* This flag can be used for type testing.
-		*
-		* @type {boolean}
-		* @readonly
-		* @default true
-		*/
-		this.isFogExp2 = true;
-		/**
-		* The name of the fog.
-		*
-		* @type {string}
-		*/
-		this.name = "";
-		/**
-		* The fog's color.
-		*
-		* @type {Color}
-		*/
-		this.color = new Color(color);
-		/**
-		*  Defines how fast the fog will grow dense.
-		*
-		* @type {number}
-		* @default 0.00025
-		*/
-		this.density = density;
-	}
-	/**
-	* Returns a new fog with copied values from this instance.
-	*
-	* @return {FogExp2} A clone of this instance.
-	*/
-	clone() {
-		return new FogExp2(this.color, this.density);
-	}
-	/**
-	* Serializes the fog into JSON.
-	*
-	* @param {?(Object|string)} meta - An optional value holding meta information about the serialization.
-	* @return {Object} A JSON object representing the serialized fog
-	*/
-	toJSON() {
-		return {
-			type: "FogExp2",
-			name: this.name,
-			color: this.color.getHex(),
-			density: this.density
-		};
-	}
-};
-/**
 * Scenes allow you to set up what is to be rendered and where by three.js.
 * This is where you place 3D objects like meshes, lines or lights.
 *
@@ -44738,8 +44669,6 @@ var DEFAULT_YAW = 0;
 var DEFAULT_PITCH = .16;
 var DEFAULT_RADIUS = 4.65;
 var TARGET_Y = COSMIC_ORB_CENTER_Y - .12;
-var NORMAL_BG_COLOR = new Color("#0c1220");
-var BADMASH_BG_COLOR = new Color("#130b20");
 var NORMAL_KEY_COLOR = new Color("#93c5fd");
 var BADMASH_KEY_COLOR = new Color("#d8b4fe");
 var NORMAL_RIM_COLOR = new Color("#38bdf8");
@@ -44757,10 +44686,12 @@ function detectSoftwareGl() {
 		return true;
 	}
 }
-function CosmicKnightCanvas({ mode, cosmicState, audioLevelRef, resetViewSignal }) {
+function CosmicKnightCanvas({ mode, cosmicState, moodProfile, audioLevelRef, resetViewSignal }) {
 	const containerRef = (0, import_react.useRef)(null);
 	const modeRef = (0, import_react.useRef)(mode);
 	const stateRef = (0, import_react.useRef)(cosmicState);
+	const moodKeyColorRef = (0, import_react.useRef)(new Color(moodProfile?.keyLightHex ?? (mode === "badmash" ? "#d8b4fe" : "#93c5fd")));
+	const moodRimColorRef = (0, import_react.useRef)(new Color(moodProfile?.rimLightHex ?? (mode === "badmash" ? "#c084fc" : "#38bdf8")));
 	const yawRef = (0, import_react.useRef)(DEFAULT_YAW);
 	const pitchRef = (0, import_react.useRef)(DEFAULT_PITCH);
 	const targetYawRef = (0, import_react.useRef)(DEFAULT_YAW);
@@ -44772,6 +44703,15 @@ function CosmicKnightCanvas({ mode, cosmicState, audioLevelRef, resetViewSignal 
 	(0, import_react.useEffect)(() => {
 		stateRef.current = cosmicState;
 	}, [cosmicState]);
+	(0, import_react.useEffect)(() => {
+		if (moodProfile) {
+			moodKeyColorRef.current.set(moodProfile.keyLightHex);
+			moodRimColorRef.current.set(moodProfile.rimLightHex);
+		} else {
+			moodKeyColorRef.current.copy(mode === "badmash" ? BADMASH_KEY_COLOR : NORMAL_KEY_COLOR);
+			moodRimColorRef.current.copy(mode === "badmash" ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR);
+		}
+	}, [mode, moodProfile]);
 	(0, import_react.useEffect)(() => {
 		if (resetViewSignal > 0) {
 			targetYawRef.current = DEFAULT_YAW;
@@ -44788,7 +44728,7 @@ function CosmicKnightCanvas({ mode, cosmicState, audioLevelRef, resetViewSignal 
 			renderer = new WebGLRenderer({
 				antialias: !isSoftwareGl,
 				powerPreference: isSoftwareGl ? "default" : "high-performance",
-				alpha: false
+				alpha: true
 			});
 		} catch {
 			return;
@@ -44797,6 +44737,7 @@ function CosmicKnightCanvas({ mode, cosmicState, audioLevelRef, resetViewSignal 
 		const maxDpr = initialW < 768 ? 1.25 : 1.5;
 		renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, maxDpr));
 		renderer.setSize(initialW, container.clientHeight || window.innerHeight);
+		renderer.setClearColor(0, 0);
 		renderer.toneMapping = 4;
 		renderer.toneMappingExposure = 1.08;
 		renderer.outputColorSpace = SRGBColorSpace;
@@ -44812,9 +44753,7 @@ function CosmicKnightCanvas({ mode, cosmicState, audioLevelRef, resetViewSignal 
 		};
 		canvas.addEventListener("webglcontextlost", onContextLost, false);
 		const scene = new Scene();
-		const currentBg = (modeRef.current === "badmash" ? BADMASH_BG_COLOR : NORMAL_BG_COLOR).clone();
-		scene.background = currentBg;
-		scene.fog = new FogExp2(currentBg.getHex(), .055);
+		scene.background = null;
 		const width = container.clientWidth || window.innerWidth;
 		const height = container.clientHeight || window.innerHeight;
 		const camera = new PerspectiveCamera(42, width / Math.max(height, 1), .1, 60);
@@ -44834,11 +44773,14 @@ function CosmicKnightCanvas({ mode, cosmicState, audioLevelRef, resetViewSignal 
 		const rimLight = new DirectionalLight(modeRef.current === "badmash" ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR, 1.55);
 		rimLight.position.set(-3.4, 3.6, -2.8);
 		scene.add(rimLight);
-		const groundGeo = new CircleGeometry(18, 32);
+		const groundGeo = new CircleGeometry(6.5, 32);
 		const groundMat = new MeshStandardMaterial({
-			color: "#1b2232",
-			roughness: .88,
-			metalness: .2
+			color: "#0f172a",
+			roughness: .9,
+			metalness: .15,
+			transparent: true,
+			opacity: .24,
+			depthWrite: false
 		});
 		const groundMesh = new Mesh(groundGeo, groundMat);
 		groundMesh.rotation.x = -Math.PI / 2;
@@ -44941,12 +44883,9 @@ function CosmicKnightCanvas({ mode, cosmicState, audioLevelRef, resetViewSignal 
 			const dt = Math.min(.05, (now - prevTime) / 1e3);
 			prevTime = now;
 			const elapsed = now / 1e3;
-			const isBadmash = modeRef.current === "badmash";
-			currentBg.lerp(isBadmash ? BADMASH_BG_COLOR : NORMAL_BG_COLOR, Math.min(1, dt * 5));
-			if (scene.fog instanceof FogExp2) scene.fog.color.copy(currentBg);
-			keyLight.color.lerp(isBadmash ? BADMASH_KEY_COLOR : NORMAL_KEY_COLOR, Math.min(1, dt * 5));
-			rimLight.color.lerp(isBadmash ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR, Math.min(1, dt * 5));
-			particleMat.color.lerp(isBadmash ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR, Math.min(1, dt * 5));
+			keyLight.color.lerp(moodKeyColorRef.current, Math.min(1, dt * 3.5));
+			rimLight.color.lerp(moodRimColorRef.current, Math.min(1, dt * 3.5));
+			particleMat.color.lerp(moodRimColorRef.current, Math.min(1, dt * 3.5));
 			yawRef.current += (targetYawRef.current - yawRef.current) * Math.min(1, dt * 10);
 			pitchRef.current += (targetPitchRef.current - pitchRef.current) * Math.min(1, dt * 10);
 			updateCameraTransform(camera.aspect);
@@ -49211,6 +49150,74 @@ function classifyLatency(latencyMs, isLive = true) {
 		textClass: "text-red-300"
 	};
 }
+// src/utils/responseMood.ts
+var MOOD_VISUAL_PROFILES = {
+	warm: {
+		mood: "warm",
+		label: "Warm & Friendly",
+		baseGradientClass: "bg-gradient-to-br from-[#081020] via-[#0d1830] to-[#080d1a]",
+		radialGlowClass: "bg-[radial-gradient(circle_at_50%_42%,rgba(56,189,248,0.20),rgba(99,102,241,0.10)_46%,transparent_74%)]",
+		keyLightHex: "#93c5fd",
+		rimLightHex: "#38bdf8"
+	},
+	savage: {
+		mood: "savage",
+		label: "Fierce & Savage",
+		baseGradientClass: "bg-gradient-to-br from-[#14081c] via-[#1f0b24] to-[#0b0714]",
+		radialGlowClass: "bg-[radial-gradient(circle_at_50%_42%,rgba(168,85,247,0.24),rgba(225,29,72,0.12)_48%,transparent_74%)]",
+		keyLightHex: "#e9d5ff",
+		rimLightHex: "#e879f9"
+	},
+	playful: {
+		mood: "playful",
+		label: "Playful & Witty",
+		baseGradientClass: "bg-gradient-to-br from-[#0e0f24] via-[#1a122e] to-[#0a0c19]",
+		radialGlowClass: "bg-[radial-gradient(circle_at_50%_42%,rgba(245,158,11,0.18),rgba(192,132,252,0.16)_46%,transparent_74%)]",
+		keyLightHex: "#fde68a",
+		rimLightHex: "#c084fc"
+	},
+	empathetic: {
+		mood: "empathetic",
+		label: "Calm & Supportive",
+		baseGradientClass: "bg-gradient-to-br from-[#07151c] via-[#0c1e2a] to-[#080f18]",
+		radialGlowClass: "bg-[radial-gradient(circle_at_50%_42%,rgba(45,212,191,0.20),rgba(56,189,248,0.10)_46%,transparent_74%)]",
+		keyLightHex: "#99f6e4",
+		rimLightHex: "#2dd4bf"
+	},
+	analytical: {
+		mood: "analytical",
+		label: "Focused & Analytical",
+		baseGradientClass: "bg-gradient-to-br from-[#071220] via-[#0a1d2d] to-[#070e19]",
+		radialGlowClass: "bg-[radial-gradient(circle_at_50%_42%,rgba(14,165,233,0.22),rgba(16,185,129,0.11)_46%,transparent_74%)]",
+		keyLightHex: "#bae6fd",
+		rimLightHex: "#34d399"
+	},
+	alert: {
+		mood: "alert",
+		label: "Reconnecting / Alert",
+		baseGradientClass: "bg-gradient-to-br from-[#160b10] via-[#1c1014] to-[#0b0b12]",
+		radialGlowClass: "bg-[radial-gradient(circle_at_50%_42%,rgba(245,158,11,0.18),rgba(239,68,68,0.11)_46%,transparent_74%)]",
+		keyLightHex: "#fed7aa",
+		rimLightHex: "#f87171"
+	}
+};
+var EMPATHETIC_PATTERN = /\b(sorry|maaf|chinta|fikar|tension\s*mat|himmat|saath\s*hoon|sath\s*hoon|udaas|dukhi|sad|calm|breathe|relax|care|understand|theek\s*ho\s*jayega|everything\s*will\s*be\s*okay|don'?t\s*worry|support|hug|pyaar|dil\s*se|hausla)\b/i;
+var SAVAGE_PATTERN = /\b(aukat|bewakoof|gando|gyan\s*pel|nalla|fattu|shaana|shaanapanti|waat\s*lag|kopch[ae]|dho\s*daala|satak\s*le|kat\s*le|bakwas|churan|bol\s*bachchan|kaccha\s*limbu|jholer|topi|sultana|roast|savage|hawa\s*aane\s*de|patli\s*gali|abe\s*saale)\b/i;
+var PLAYFUL_PATTERN = /\b(haha|hehe|lol|lmao|joke|shayari|rap\b|cypher|verse|jhakaas|rapchik|kadak|dhasu|mast|mazaa|maza|funny|comedy|meme|bhidu|bantai|lala|chela|swag|party)\b/i;
+var ANALYTICAL_PATTERN = /(₹|\$|°c|\bdegrees?\b|\b24k\b|\b22k\b|\bgold\b|\bsilver\b|\bipl\b|\bscore(?:card)?\b|\bruns?\b|\bwickets?\b|\bovers?\b|\bweather\b|\btemperature\b|\bforecast\b|\bhumidity\b|\brain\b|\bpercent\b|%|\bnews\b|\bsource\b|\bverified\b|\bprice\b|\brate\b|\bmarket\b|\bnifty\b|\bsensex\b|\bbitcoin\b|\blogic\b|\breason\b|\bkyunki\b|\bbecause\b|\bcalculate\b|\balgorithm\b|\bcode\b)/i;
+function detectResponseMood(params) {
+	const { mode, cosmicState, latestCosmicText, latestUserText } = params;
+	if (cosmicState === "ERROR" || cosmicState === "RECONNECTING") return MOOD_VISUAL_PROFILES.alert;
+	const cosmicLower = (latestCosmicText || "").trim();
+	const userLower = (latestUserText || "").trim();
+	const combined = `${cosmicLower} ${userLower}`.trim();
+	if (EMPATHETIC_PATTERN.test(cosmicLower) || EMPATHETIC_PATTERN.test(userLower)) return MOOD_VISUAL_PROFILES.empathetic;
+	if (ANALYTICAL_PATTERN.test(cosmicLower) || ANALYTICAL_PATTERN.test(userLower)) return MOOD_VISUAL_PROFILES.analytical;
+	if (SAVAGE_PATTERN.test(cosmicLower)) return MOOD_VISUAL_PROFILES.savage;
+	if (PLAYFUL_PATTERN.test(combined)) return MOOD_VISUAL_PROFILES.playful;
+	if (mode === "badmash") return MOOD_VISUAL_PROFILES.savage;
+	return MOOD_VISUAL_PROFILES.warm;
+}
 // src/App.tsx
 function App() {
 	const { mode, cosmicState, isMicMuted, isDeveloperVerified, isAdminAuthenticated, features, pendingWhatsAppDraft, errorMessage, micNotice, backendUrl, transcripts, recentSessions, actionLogs, diagnosticLogs, diagnostics, speakerTestResult, liveKnowledge, unityAdsSnapshot, adSnackbarMessage, pendingPowerOnUnlock, powerOnAdNotice, lastAdRuleEvent, adElapsedActiveMs, sessionDurationMs, sessionDurationState, bridgeRuntime, audioLevelRef, togglePower, toggleMicMute, toggleBadmashMode, updateFeatures, runLiveKnowledgeSearch, clearLiveKnowledge, confirmWhatsAppDraft, dismissWhatsAppDraft, verifyAdminAccess, logoutAdmin, retryMicrophone, sendTextMessage, testSpeaker, runManualSafeAction, updateBackendUrl, clearRecentSessions, reloadRewardedAd, clearAdSnackbar, clearPowerOnAdNotice, clearError, clearMicNotice } = useCosmicLive();
@@ -49221,10 +49228,25 @@ function App() {
 	const brandTapTimesRef = (0, import_react.useRef)([]);
 	const isBadmash = mode === "badmash";
 	const isLive = cosmicState === "CONNECTING" || cosmicState === "RECONNECTING" || cosmicState === "LISTENING" || cosmicState === "SPEAKING";
+	const latestTranscript = transcripts[transcripts.length - 1] || null;
+	const latestCosmicTranscript = [...transcripts].reverse().find((entry) => entry.speaker === "cosmic") || null;
+	const latestUserTranscript = [...transcripts].reverse().find((entry) => entry.speaker === "user") || null;
+	const captionEntry = latestCosmicTranscript || latestTranscript;
+	const moodProfile = detectResponseMood({
+		mode,
+		cosmicState,
+		latestCosmicText: latestCosmicTranscript?.text,
+		latestUserText: latestUserTranscript?.text
+	});
 	(0, import_react.useEffect)(() => {
 		document.body.dataset.cosmicState = cosmicState;
 		document.body.dataset.cosmicMode = mode;
-	}, [cosmicState, mode]);
+		document.body.dataset.cosmicMood = moodProfile.mood;
+	}, [
+		cosmicState,
+		mode,
+		moodProfile.mood
+	]);
 	(0, import_react.useEffect)(() => {
 		const onKeyDown = (e) => {
 			if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "d" || e.altKey && e.shiftKey && e.key.toLowerCase() === "a") {
@@ -49252,16 +49274,29 @@ function App() {
 		setTextDraft("");
 		sendTextMessage(msg);
 	};
-	const latestTranscript = transcripts[transcripts.length - 1] || null;
-	const captionEntry = [...transcripts].reverse().find((entry) => entry.speaker === "cosmic") || latestTranscript;
 	const latencyStatus = classifyLatency(diagnostics.backendLatencyMs, isLive);
 	const showTextFallback = isLive && (isMicMuted || !diagnostics.micActive || Boolean(micNotice));
+	const stateColorClass = cosmicState === "ERROR" ? "text-red-400" : cosmicState === "RECONNECTING" || cosmicState === "CONNECTING" ? "text-amber-300" : cosmicState === "SPEAKING" ? isBadmash ? "text-fuchsia-300" : "text-sky-300" : cosmicState === "LISTENING" ? isBadmash ? "text-purple-300" : "text-sky-400" : "text-slate-400";
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "relative h-screen w-screen overflow-hidden bg-[#0c1220] text-slate-100 select-none",
+		className: "relative h-screen w-screen overflow-hidden bg-[#080d1a] text-slate-100 select-none",
 		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				"aria-hidden": "true",
+				"data-testid": "dynamic-mood-backdrop",
+				"data-mood": moodProfile.mood,
+				className: "pointer-events-none fixed inset-0 z-0 overflow-hidden",
+				children: Object.values(MOOD_VISUAL_PROFILES).map((profile) => {
+					const isActive = profile.mood === moodProfile.mood;
+					return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: `absolute inset-0 transition-opacity duration-1000 ease-out motion-reduce:transition-none ${profile.baseGradientClass} ${isActive ? "opacity-100" : "opacity-0"}`,
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `absolute inset-0 ${profile.radialGlowClass}` })
+					}, profile.mood);
+				})
+			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CosmicKnightCanvas, {
 				mode,
 				cosmicState,
+				moodProfile,
 				audioLevelRef,
 				resetViewSignal
 			}),
@@ -49280,7 +49315,7 @@ function App() {
 							className: "hidden items-center gap-2 font-mono text-xs text-slate-300 sm:flex",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: `font-semibold tracking-wider ${cosmicState === "ERROR" ? "text-red-400" : cosmicState === "RECONNECTING" || cosmicState === "CONNECTING" ? "text-amber-300" : cosmicState === "SPEAKING" ? isBadmash ? "text-fuchsia-300" : "text-sky-300" : cosmicState === "LISTENING" ? isBadmash ? "text-purple-300" : "text-sky-400" : "text-slate-400"}`,
+									className: `font-semibold tracking-wider ${stateColorClass}`,
 									"data-testid": "cosmic-state-label",
 									children: cosmicState
 								}),

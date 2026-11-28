@@ -21,6 +21,7 @@ import { SettingsFeaturesModal } from './components/SettingsFeaturesModal.tsx';
 import { VoiceWaveform } from './components/VoiceWaveform.tsx';
 import { useCosmicLive } from './hooks/useCosmicLive.ts';
 import { classifyLatency } from './utils/latency.ts';
+import { detectResponseMood, MOOD_VISUAL_PROFILES } from './utils/responseMood.ts';
 
 export default function App() {
   const {
@@ -88,10 +89,24 @@ export default function App() {
     cosmicState === 'LISTENING' ||
     cosmicState === 'SPEAKING';
 
+  const latestTranscript = transcripts[transcripts.length - 1] || null;
+  const latestCosmicTranscript =
+    [...transcripts].reverse().find((entry) => entry.speaker === 'cosmic') || null;
+  const latestUserTranscript =
+    [...transcripts].reverse().find((entry) => entry.speaker === 'user') || null;
+  const captionEntry = latestCosmicTranscript || latestTranscript;
+  const moodProfile = detectResponseMood({
+    mode,
+    cosmicState,
+    latestCosmicText: latestCosmicTranscript?.text,
+    latestUserText: latestUserTranscript?.text,
+  });
+
   useEffect(() => {
     document.body.dataset.cosmicState = cosmicState;
     document.body.dataset.cosmicMode = mode;
-  }, [cosmicState, mode]);
+    document.body.dataset.cosmicMood = moodProfile.mood;
+  }, [cosmicState, mode, moodProfile.mood]);
 
   // Hidden keyboard shortcut (Ctrl+Shift+D or Alt+Shift+A) for protected developer/admin console
   useEffect(() => {
@@ -128,10 +143,6 @@ export default function App() {
     void sendTextMessage(msg);
   };
 
-  const latestTranscript = transcripts[transcripts.length - 1] || null;
-  const latestCosmicTranscript =
-    [...transcripts].reverse().find((entry) => entry.speaker === 'cosmic') || null;
-  const captionEntry = latestCosmicTranscript || latestTranscript;
   const latencyStatus = classifyLatency(diagnostics.backendLatencyMs, isLive);
   const showTextFallback = isLive && (isMicMuted || !diagnostics.micActive || Boolean(micNotice));
 
@@ -151,11 +162,34 @@ export default function App() {
             : 'text-slate-400';
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#0c1220] text-slate-100 select-none">
+    <div className="relative h-screen w-screen overflow-hidden bg-[#080d1a] text-slate-100 select-none">
+      {/* Dynamic Mood & Personality Background Gradient (Compositor-Only Opacity Crossfade) */}
+      <div
+        aria-hidden="true"
+        data-testid="dynamic-mood-backdrop"
+        data-mood={moodProfile.mood}
+        className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
+      >
+        {Object.values(MOOD_VISUAL_PROFILES).map((profile) => {
+          const isActive = profile.mood === moodProfile.mood;
+          return (
+            <div
+              key={profile.mood}
+              className={`absolute inset-0 transition-opacity duration-1000 ease-out motion-reduce:transition-none ${
+                profile.baseGradientClass
+              } ${isActive ? 'opacity-100' : 'opacity-0'}`}
+            >
+              <div className={`absolute inset-0 ${profile.radialGlowClass}`} />
+            </div>
+          );
+        })}
+      </div>
+
       {/* Full-Viewport 3D Knight Scene */}
       <CosmicKnightCanvas
         mode={mode}
         cosmicState={cosmicState}
+        moodProfile={moodProfile}
         audioLevelRef={audioLevelRef}
         resetViewSignal={resetViewSignal}
       />

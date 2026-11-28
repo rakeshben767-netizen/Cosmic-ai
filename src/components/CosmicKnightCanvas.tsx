@@ -8,10 +8,12 @@ import {
   disposeObjectTree,
   type CosmicOrbRig,
 } from '../three/cosmicOrbModel.ts';
+import type { MoodVisualProfile } from '../utils/responseMood.ts';
 
 interface CosmicKnightCanvasProps {
   mode: CosmicMode;
   cosmicState: CosmicState;
+  moodProfile?: MoodVisualProfile;
   audioLevelRef: React.MutableRefObject<number>;
   resetViewSignal: number;
 }
@@ -21,8 +23,6 @@ const DEFAULT_PITCH = 0.16;
 const DEFAULT_RADIUS = 4.65;
 const TARGET_Y = COSMIC_ORB_CENTER_Y - 0.12;
 
-const NORMAL_BG_COLOR = new THREE.Color('#0c1220');
-const BADMASH_BG_COLOR = new THREE.Color('#130b20');
 const NORMAL_KEY_COLOR = new THREE.Color('#93c5fd');
 const BADMASH_KEY_COLOR = new THREE.Color('#d8b4fe');
 const NORMAL_RIM_COLOR = new THREE.Color('#38bdf8');
@@ -46,12 +46,19 @@ function detectSoftwareGl(): boolean {
 export function CosmicKnightCanvas({
   mode,
   cosmicState,
+  moodProfile,
   audioLevelRef,
   resetViewSignal,
 }: CosmicKnightCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const modeRef = useRef<CosmicMode>(mode);
   const stateRef = useRef<CosmicState>(cosmicState);
+  const moodKeyColorRef = useRef<THREE.Color>(
+    new THREE.Color(moodProfile?.keyLightHex ?? (mode === 'badmash' ? '#d8b4fe' : '#93c5fd')),
+  );
+  const moodRimColorRef = useRef<THREE.Color>(
+    new THREE.Color(moodProfile?.rimLightHex ?? (mode === 'badmash' ? '#c084fc' : '#38bdf8')),
+  );
 
   const yawRef = useRef(DEFAULT_YAW);
   const pitchRef = useRef(DEFAULT_PITCH);
@@ -66,6 +73,16 @@ export function CosmicKnightCanvas({
   useEffect(() => {
     stateRef.current = cosmicState;
   }, [cosmicState]);
+
+  useEffect(() => {
+    if (moodProfile) {
+      moodKeyColorRef.current.set(moodProfile.keyLightHex);
+      moodRimColorRef.current.set(moodProfile.rimLightHex);
+    } else {
+      moodKeyColorRef.current.copy(mode === 'badmash' ? BADMASH_KEY_COLOR : NORMAL_KEY_COLOR);
+      moodRimColorRef.current.copy(mode === 'badmash' ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR);
+    }
+  }, [mode, moodProfile]);
 
   useEffect(() => {
     if (resetViewSignal > 0) {
@@ -86,7 +103,7 @@ export function CosmicKnightCanvas({
       renderer = new THREE.WebGLRenderer({
         antialias: !isSoftwareGl,
         powerPreference: isSoftwareGl ? 'default' : 'high-performance',
-        alpha: false,
+        alpha: true,
       });
     } catch {
       return;
@@ -96,6 +113,7 @@ export function CosmicKnightCanvas({
     const maxDpr = initialW < 768 ? 1.25 : 1.5;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, maxDpr));
     renderer.setSize(initialW, container.clientHeight || window.innerHeight);
+    renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.08;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -114,9 +132,7 @@ export function CosmicKnightCanvas({
     canvas.addEventListener('webglcontextlost', onContextLost, false);
 
     const scene = new THREE.Scene();
-    const currentBg = (modeRef.current === 'badmash' ? BADMASH_BG_COLOR : NORMAL_BG_COLOR).clone();
-    scene.background = currentBg;
-    scene.fog = new THREE.FogExp2(currentBg.getHex(), 0.055);
+    scene.background = null;
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -153,12 +169,15 @@ export function CosmicKnightCanvas({
     rimLight.position.set(-3.4, 3.6, -2.8);
     scene.add(rimLight);
 
-    // Subtle ground circle fading into fog
-    const groundGeo = new THREE.CircleGeometry(18, 32);
+    // Subtle translucent ground disc so the dynamic mood gradient shines through
+    const groundGeo = new THREE.CircleGeometry(6.5, 32);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: '#1b2232',
-      roughness: 0.88,
-      metalness: 0.2,
+      color: '#0f172a',
+      roughness: 0.9,
+      metalness: 0.15,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
     });
     const groundMesh = new THREE.Mesh(groundGeo, groundMat);
     groundMesh.rotation.x = -Math.PI / 2;
@@ -285,15 +304,9 @@ export function CosmicKnightCanvas({
       prevTime = now;
       const elapsed = now / 1000;
 
-      const isBadmash = modeRef.current === 'badmash';
-
-      currentBg.lerp(isBadmash ? BADMASH_BG_COLOR : NORMAL_BG_COLOR, Math.min(1, dt * 5));
-      if (scene.fog instanceof THREE.FogExp2) {
-        scene.fog.color.copy(currentBg);
-      }
-      keyLight.color.lerp(isBadmash ? BADMASH_KEY_COLOR : NORMAL_KEY_COLOR, Math.min(1, dt * 5));
-      rimLight.color.lerp(isBadmash ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR, Math.min(1, dt * 5));
-      particleMat.color.lerp(isBadmash ? BADMASH_RIM_COLOR : NORMAL_RIM_COLOR, Math.min(1, dt * 5));
+      keyLight.color.lerp(moodKeyColorRef.current, Math.min(1, dt * 3.5));
+      rimLight.color.lerp(moodRimColorRef.current, Math.min(1, dt * 3.5));
+      particleMat.color.lerp(moodRimColorRef.current, Math.min(1, dt * 3.5));
 
       yawRef.current += (targetYawRef.current - yawRef.current) * Math.min(1, dt * 10);
       pitchRef.current += (targetPitchRef.current - pitchRef.current) * Math.min(1, dt * 10);
